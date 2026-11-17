@@ -27,7 +27,10 @@ struct Session: Identifiable, Equatable {
     var tool = "claude"   // "claude" or "codex"
     var title: String
     var waitingFor: String? = nil
-    var recap: String? = nil    // where the session is: Claude Code's own saved recap, or failing that the last thing asked
+    var recap: String? = nil      // where the session is: Claude Code's own saved recap
+    var lastAsked: String? = nil  // the most recent thing you typed in it
+    /// One line saying where the session is, for places with room for only one.
+    var gist: String? { recap ?? lastAsked.map { "Last asked: " + $0 } }
     var branch: String? = nil
     /// Opened but never used: Claude Code has no title or history for it, only a placeholder name like "repo-e9".
     var empty = false
@@ -85,7 +88,7 @@ enum Loader {
             s.empty = found == nil
             s.waitingFor = o["waitingFor"] as? String
             s.startedAt = o["startedAt"] as? Double ?? 0
-            let ex = extras(for: sid, cwd: cwd); s.recap = ex.recap; s.branch = ex.branch
+            let ex = extras(for: sid, cwd: cwd); s.recap = ex.recap; s.branch = ex.branch; s.lastAsked = ex.asked
             out.append(s)
         }
         out += Codex.load()
@@ -114,23 +117,23 @@ enum Loader {
     }
 
     /// Where a session is and which git branch it is on, read from the end of its history file.
-    static var extraCache: [String: (size: UInt64, recap: String?, branch: String?)] = [:]
-    static func extras(for sid: String, cwd: String) -> (recap: String?, branch: String?) {
+    static var extraCache: [String: (size: UInt64, recap: String?, branch: String?, asked: String?)] = [:]
+    static func extras(for sid: String, cwd: String) -> (recap: String?, branch: String?, asked: String?) {
         let esc = cwd.replacingOccurrences(of: "[^A-Za-z0-9]", with: "-", options: .regularExpression)
         let url = home.appendingPathComponent(".claude/projects/\(esc)/\(sid).jsonl")
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path), let size = attrs[.size] as? UInt64 else { return (nil, nil) }
-        if let c = extraCache[sid], c.size == size { return (c.recap, c.branch) }
-        var recap: String? = nil, branch: String? = nil
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path), let size = attrs[.size] as? UInt64 else { return (nil, nil, nil) }
+        if let c = extraCache[sid], c.size == size { return (c.recap, c.branch, c.asked) }
+        var recap: String? = nil, branch: String? = nil, asked: String? = nil
         if let data = try? Data(contentsOf: url, options: .mappedIfSafe) {
             // Claude Code writes a short recap into the history when a session has been left for a few minutes.
             if let hit = lastLine(in: data, containing: "\"subtype\":\"away_summary\"") { recap = hit.obj["content"] as? String }
             if let r = data.range(of: Data("\"gitBranch\":\"".utf8), options: .backwards), let q = data[r.upperBound...].firstIndex(of: UInt8(ascii: "\"")) {
                 branch = String(decoding: data[r.upperBound..<q], as: UTF8.self)
             }
-            if recap == nil, let asked = lastPrompt(in: data) { recap = "Last asked: " + asked }
+            asked = lastPrompt(in: data)
         }
-        extraCache[sid] = (size, recap, branch)
-        return (recap, branch)
+        extraCache[sid] = (size, recap, branch, asked)
+        return (recap, branch, asked)
     }
     /// The last line of the file that contains some text, parsed, searching backwards from the end (or from an earlier point).
     static func lastLine(in data: Data, containing needle: String, before: Data.Index? = nil) -> (obj: [String: Any], start: Data.Index)? {
@@ -154,7 +157,7 @@ enum Loader {
             if text == nil, let parts = m["content"] as? [[String: Any]] { text = parts.first { $0["type"] as? String == "text" }?["text"] as? String }
             guard let t = text?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty, !t.hasPrefix("<"), !t.hasPrefix("[") else { continue }
             let one = t.split(separator: "\n").first.map(String.init) ?? t
-            return one.count > 140 ? String(one.prefix(139)) + "…" : one
+            return one.count > 400 ? String(one.prefix(399)) + "…" : one
         }
         return nil
     }
@@ -318,6 +321,11 @@ final class Model: ObservableObject {
         UserDefaults.standard.set(Array(pinned), forKey: "pinned")
     }
 
+    /// Sessions matching the search, most recent activity first, not grouped.
+    var hits: [Session] {
+        let words = query.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        return words.isEmpty ? sessions : sessions.filter { s in let hay = (s.title + " " + s.project + " " + (s.branch ?? "")).lowercased(); return words.allSatisfy { hay.contains($0) } }
+    }
     var filtered: [Session] {
         let q = query.lowercased()
         // Every word typed or spoken has to appear somewhere in the title or the repo name.
@@ -350,23 +358,247 @@ struct RootView: View {
     var detached = false   // true for the stay-on-screen window, false for the panel under the notch
     @FocusState private var searchFocused: Bool
     @State private var hovered: String?
-    @State private var showUnused: Set<String> = []   // repos whose never-used sessions are expanded
+    @State private var showUnused: Set<String> = []   // groups whose never-used sessions are expanded
+    @State private var collapsed: Set<String> = []    // groups folded shut
+    @State private var detailId: String?              // the session shown in the detail pane: the last one pointed at
+    @AppStorage("widgetGroup") private var groupBy = "repo"    // repo | state
+    @AppStorage("widgetFilter") private var filter = "all"     // all | active | pinned
     static let openWidth: CGFloat = 640, openHeight: CGFloat = 470
 
     // Closed, the black shape is exactly the notch (or nothing, on a screen without one), so it can't be seen.
     // Opening grows that shape outward and down while the contents fade in; closing runs it backwards.
     var body: some View { if detached { widgetBody } else { panelBody } }
 
-    /// The stay-on-screen window: the same list on dark glass, draggable to any display and resizable.
+    /// The stay-on-screen window. One aligned list, in the manner of an issue tracker: a slim header per group,
+    /// one row per session with its facts in columns, and, when the window is wide, a pane on the right that
+    /// shows everything about the session you are pointing at.
     var widgetBody: some View {
-        VStack(spacing: 0) {
-            // Starts to the right of the window's close, minimise and full-screen buttons.
-            HStack(spacing: 8) { dots; stats; Spacer() }.padding(.leading, 78).padding(.trailing, 16).frame(height: 30)
-            list
+        GeometryReader { geo in
+            let table = geo.size.width >= 620, wide = geo.size.width >= 1060
+            let groups = sessionGroups()
+            VStack(spacing: 0) {
+                // Starts to the right of the window's close, minimise and full-screen buttons.
+                HStack(spacing: 8) { dots; stats; Spacer() }.padding(.leading, 78).padding(.trailing, 16).frame(height: 30)
+                searchRow
+                toolbar
+                Rectangle().fill(.white.opacity(0.08)).frame(height: 1)
+                HStack(spacing: 0) {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                            ForEach(groups) { g in
+                                Section(header: groupHeader(g)) {
+                                    if !collapsed.contains(g.id) {
+                                        ForEach(g.items) { s in sessionRow(s, table: table) }
+                                        if !g.unused.isEmpty {
+                                            if showUnused.contains(g.id) { ForEach(g.unused) { s in sessionRow(s, table: table) } }
+                                            Text(showUnused.contains(g.id) ? "hide unused" : "\(g.unused.count) opened but never used")
+                                                .font(.system(size: 11)).foregroundStyle(.white.opacity(0.3))
+                                                .padding(.leading, 44).padding(.vertical, 6).frame(maxWidth: .infinity, alignment: .leading)
+                                                .contentShape(Rectangle()).modifier(PointerLink())
+                                                .onTapGesture { toggle(&showUnused, g.id) }
+                                        }
+                                    }
+                                }
+                            }
+                            if groups.isEmpty {
+                                Text(model.query.isEmpty ? "Nothing here yet." : "No session matches that.")
+                                    .font(.system(size: 12.5)).foregroundStyle(.white.opacity(0.4)).padding(24).frame(maxWidth: .infinity)
+                            }
+                        }
+                        .padding(.bottom, 14)
+                        // When a session has activity it glides up to its new place, and the others slide to make room.
+                        .animation(.spring(response: 0.5, dampingFraction: 0.84), value: groups.flatMap { $0.items.map { $0.id } })
+                    }
+                    if wide {
+                        Rectangle().fill(.white.opacity(0.08)).frame(width: 1)
+                        detailPane.frame(width: 380)
+                    }
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(ZStack { Rectangle().fill(.ultraThinMaterial); Color.black.opacity(0.45) }.environment(\.colorScheme, .dark))
+        // Dark enough that the list reads the same whatever is behind the window; the glass shows as a faint tint.
+        .background(ZStack { Rectangle().fill(.ultraThinMaterial); Color(white: 0.045).opacity(0.86) }.environment(\.colorScheme, .dark))
         .ignoresSafeArea()
+    }
+
+    func toggle(_ set: inout Set<String>, _ id: String) { if set.contains(id) { set.remove(id) } else { set.insert(id) } }
+    func isActive(_ s: Session) -> Bool { !s.empty && (s.rank < 3 || s.seconds < 86_400) }
+
+    struct SessionGroup: Identifiable { let id: String; let items: [Session]; let unused: [Session] }
+    /// The list's contents: search, then the chosen filter, then grouped by repo or by state.
+    func sessionGroups() -> [SessionGroup] {
+        var rows = model.hits
+        if filter == "active" { rows = rows.filter(isActive) }
+        if filter == "pinned" { rows = rows.filter { model.pinned.contains($0.id) } }
+        if groupBy == "state" {
+            let buckets: [(String, (Session) -> Bool)] = [
+                ("Needs you", { $0.rank == 0 }), ("Finished", { $0.rank == 1 }), ("Working", { $0.rank == 2 }),
+                ("Idle, used today", { $0.rank == 3 && $0.seconds < 86_400 }), ("Idle, older", { $0.rank == 3 && $0.seconds >= 86_400 }),
+            ]
+            var out = buckets.map { SessionGroup(id: $0.0, items: rows.filter($0.1), unused: []) }.filter { !$0.items.isEmpty }
+            let unused = rows.filter { $0.empty }
+            if !unused.isEmpty { out.append(SessionGroup(id: "Never used", items: [], unused: unused)) }
+            return out
+        }
+        return repos(in: rows).map { name in
+            SessionGroup(id: name, items: rows.filter { $0.project == name && !$0.empty }, unused: rows.filter { $0.project == name && $0.empty })
+        }
+    }
+
+    var searchRow: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "magnifyingglass").font(.system(size: 13)).foregroundStyle(.white.opacity(0.45))
+            TextField("", text: $model.query, prompt: Text("Search sessions").foregroundStyle(.white.opacity(0.35)))
+                .textFieldStyle(.plain).font(.system(size: 14)).foregroundStyle(.white).tint(.white)
+            Image(systemName: dictation.listening ? "mic.fill" : "mic").font(.system(size: 13))
+                .foregroundStyle(dictation.listening ? PortalMark.lavender : .white.opacity(0.45))
+                .contentShape(Rectangle().inset(by: -6)).onTapGesture { dictation.toggle() }.help("Speak your search")
+        }
+        .padding(.horizontal, 16).padding(.vertical, 9)
+    }
+
+    /// Which sessions to show, and how to group them. Both choices are remembered.
+    var toolbar: some View {
+        HStack(spacing: 6) {
+            chip("All", model.hits.count, on: filter == "all") { filter = "all" }
+            chip("Active", model.hits.filter(isActive).count, on: filter == "active") { filter = "active" }
+            chip("Pinned", model.hits.filter { model.pinned.contains($0.id) }.count, on: filter == "pinned") { filter = "pinned" }
+            Spacer()
+            Text("Group by").font(.system(size: 11)).foregroundStyle(.white.opacity(0.35))
+            chip("Repo", nil, on: groupBy == "repo") { groupBy = "repo" }
+            chip("State", nil, on: groupBy == "state") { groupBy = "state" }
+        }
+        .padding(.horizontal, 14).padding(.bottom, 9)
+    }
+    func chip(_ label: String, _ count: Int?, on: Bool, _ act: @escaping () -> Void) -> some View {
+        HStack(spacing: 5) {
+            Text(label).foregroundStyle(.white.opacity(on ? 0.95 : 0.55))
+            if let count { Text("\(count)").foregroundStyle(.white.opacity(on ? 0.5 : 0.28)).monospacedDigit() }
+        }
+        .font(.system(size: 11.5, weight: .medium))
+        .padding(.horizontal, 9).padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 6).fill(.white.opacity(on ? 0.12 : 0)))
+        .contentShape(Rectangle()).modifier(PointerLink())
+        .onTapGesture(perform: act)
+    }
+
+    /// A slim bar naming the group, how many are in it and what they are doing. Click to fold it.
+    func groupHeader(_ g: SessionGroup) -> some View {
+        let all = g.items, doing = [all.filter { $0.rank == 0 }.count, all.filter { $0.rank == 1 }.count, all.filter { $0.rank == 2 }.count]
+        let note = groupBy == "state" ? "" : zip(doing, ["needs you", "finished", "working"]).filter { $0.0 > 0 }.map { "\($0.0) \($0.1)" }.joined(separator: " · ")
+        return HStack(spacing: 8) {
+            Image(systemName: "chevron.right").font(.system(size: 8.5, weight: .bold)).foregroundStyle(.white.opacity(0.4))
+                .rotationEffect(.degrees(collapsed.contains(g.id) ? 0 : 90))
+            Text(g.id).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.82))
+            Text("\(all.count)").font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.32)).monospacedDigit()
+            if !note.isEmpty { Text(note).font(.system(size: 11)).foregroundStyle(PortalMark.lavender.opacity(0.9)) }
+            Spacer()
+        }
+        .padding(.horizontal, 16).padding(.vertical, 7)
+        .background(Color(white: 0.105))
+        .contentShape(Rectangle()).modifier(PointerLink())
+        .onTapGesture { withAnimation(.easeInOut(duration: 0.18)) { toggle(&collapsed, g.id) } }
+    }
+
+    @ViewBuilder func orb(_ s: Session) -> some View {
+        if s.rank == 2 { Orb() }
+        else if s.rank == 0 { Orb(spinning: false) }
+        else if s.rank == 1 { Orb(spinning: false, tint: Color(white: 0.85), glow: 0.5) }
+        else { Orb(spinning: false, tint: Color(white: 0.55), size: 8, glow: 0).opacity(0.55) }
+    }
+    func stateWord(_ s: Session) -> String { ["needs you", "finished", "working", "idle", "unused"][s.rank] }
+    func stateColor(_ s: Session) -> Color { s.rank == 0 ? PortalMark.lavender : s.rank < 3 ? .white.opacity(0.9) : .white.opacity(0.34) }
+
+    /// One session on one line, its facts in columns that line up down the whole list.
+    func sessionRow(_ s: Session, table: Bool) -> some View {
+        let old = s.rank >= 3 && s.seconds >= 86_400   // idle since yesterday or earlier: shown quieter
+        let place = (groupBy == "state" ? s.project + (s.branch == nil ? "" : "  ") : "") + (s.branch ?? "")
+        return HStack(spacing: 12) {
+            orb(s).frame(width: 14, height: 14)
+            if table {
+                Text(s.title).font(.system(size: 13, weight: .medium)).foregroundStyle(.white.opacity(s.empty ? 0.4 : old ? 0.62 : 0.96))
+                    .lineLimit(1).frame(width: 270, alignment: .leading)
+                Text(s.gist ?? "").font(.system(size: 12)).foregroundStyle(.white.opacity(old ? 0.28 : 0.5))
+                    .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                Text(place).font(.system(size: 11, design: .monospaced)).foregroundStyle(.white.opacity(old ? 0.26 : 0.42))
+                    .lineLimit(1).truncationMode(.middle).frame(width: groupBy == "state" ? 230 : 170, alignment: .leading)
+                Text(stateWord(s)).font(.system(size: 11.5, weight: .medium)).foregroundStyle(stateColor(s)).frame(width: 70, alignment: .leading)
+                Text(s.age).font(.system(size: 11.5)).monospacedDigit().foregroundStyle(.white.opacity(0.38)).frame(width: 34, alignment: .trailing)
+            } else {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(s.title).font(.system(size: 13, weight: .medium)).foregroundStyle(.white.opacity(s.empty ? 0.4 : old ? 0.62 : 0.96)).lineLimit(1)
+                    (Text(stateWord(s)).foregroundColor(stateColor(s)) + Text("  \(s.age)" + (place.isEmpty ? "" : "  ·  \(place)")).foregroundColor(.white.opacity(0.4)))
+                        .font(.system(size: 11)).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            Image(systemName: "pin.fill").font(.system(size: 9)).foregroundStyle(.white.opacity(model.pinned.contains(s.id) ? 0.4 : 0)).frame(width: 10)
+        }
+        .padding(.horizontal, 16).padding(.vertical, table ? 7.5 : 6.5)
+        .background(Color.white.opacity(hovered == s.id ? 0.07 : detailId == s.id ? 0.04 : 0))
+        .contentShape(Rectangle())
+        .onHover { inside in
+            if inside { hovered = s.id; detailId = s.id; NSCursor.pointingHand.set() } else if hovered == s.id { hovered = nil; NSCursor.arrow.set() }
+        }
+        .modifier(PointerLink())
+        .onTapGesture { app?.go(s) }
+        .contextMenu { rowMenu(s) }
+    }
+
+    @ViewBuilder func rowMenu(_ s: Session) -> some View {
+        Button(model.pinned.contains(s.id) ? "Unpin" : "Pin") { model.togglePin(s.id) }
+        if !s.empty { Button("Copy resume command") { copyResume(s) } }
+        Button("Show folder in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: s.cwd) }
+    }
+    func copyResume(_ s: Session) {
+        let cmd = s.tool == "codex" ? "codex resume \(s.id.replacingOccurrences(of: "codex-", with: ""))" : "claude --resume \(s.id)"
+        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(cmd, forType: .string)
+    }
+
+    /// Everything about one session: the one you last pointed at, or failing that the one that most wants you.
+    @ViewBuilder var detailPane: some View {
+        if let s = model.sessions.first(where: { $0.id == detailId }) ?? model.spotlight ?? model.sessions.first(where: { !$0.empty }) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 8) {
+                        orb(s).frame(width: 14, height: 14)
+                        Text(stateWord(s)).font(.system(size: 12, weight: .medium)).foregroundStyle(stateColor(s))
+                        Text(s.age == "now" ? "now" : "for \(s.age)").font(.system(size: 12)).foregroundStyle(.white.opacity(0.4))
+                        if s.id == model.currentId { Text("you're here").font(.system(size: 12)).foregroundStyle(PortalMark.lavender) }
+                        Spacer()
+                    }
+                    Text(s.title).font(.system(size: 19, weight: .semibold)).foregroundStyle(.white.opacity(0.97))
+                        .fixedSize(horizontal: false, vertical: true).padding(.top, 12)
+                    Text(s.project + (s.branch.map { "  ·  \($0)" } ?? "")).font(.system(size: 11.5, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.45)).padding(.top, 5)
+                    if let recap = s.recap { detailBlock("Where it is", recap) }
+                    if let asked = s.lastAsked { detailBlock("Last asked", asked) }
+                    if s.recap == nil && s.lastAsked == nil { detailBlock("Where it is", s.empty ? "Nothing has been asked in this session yet." : "No recap saved for this session yet.") }
+                    HStack(spacing: 8) {
+                        action("Go to session", primary: true) { app?.go(s) }
+                        action(model.pinned.contains(s.id) ? "Unpin" : "Pin") { model.togglePin(s.id) }
+                        if !s.empty { action("Copy resume") { copyResume(s) } }
+                    }
+                    .padding(.top, 22)
+                }
+                .padding(22)
+            }
+        }
+    }
+    func detailBlock(_ label: String, _ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label.uppercased()).font(.system(size: 10, weight: .semibold)).kerning(0.6).foregroundStyle(.white.opacity(0.35))
+            Text(text).font(.system(size: 13)).lineSpacing(3).foregroundStyle(.white.opacity(0.82)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+        }
+        .padding(.top, 20)
+    }
+    func action(_ label: String, primary: Bool = false, _ act: @escaping () -> Void) -> some View {
+        Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(primary ? Color.black : .white.opacity(0.85))
+            .padding(.horizontal, 11).padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 7).fill(primary ? Color.white.opacity(0.92) : Color.white.opacity(0.1)))
+            .contentShape(Rectangle()).modifier(PointerLink())
+            .onTapGesture(perform: act)
     }
 
     @ViewBuilder var panelBody: some View {
@@ -454,23 +686,7 @@ struct RootView: View {
             GeometryReader { geo in
                 let rows = model.filtered
                 ScrollView {
-                    if detached {
-                        // The stay-on-screen window: cards. One column when narrow, a board when wide.
-                        // First what wants your attention and what you've pinned, then one card per repo.
-                        let wide = geo.size.width >= 640
-                        LazyVGrid(columns: wide ? [GridItem(.adaptive(minimum: 300, maximum: 520), spacing: 12, alignment: .top)] : [GridItem(.flexible(), alignment: .top)],
-                                  alignment: .leading, spacing: wide ? 12 : 8) {
-                            ForEach(callouts(rows)) { c in
-                                card(c.title, count: c.items.count, accent: c.accent) { ForEach(c.items) { s in row(s, selected: false, showRepo: true) } }
-                            }
-                            ForEach(repos(in: rows), id: \.self) { name in
-                                card(name, count: rows.filter { $0.project == name && !$0.empty }.count) { repoRows(name, rows) }
-                            }
-                        }
-                        .padding(wide ? 14 : 10)
-                        // When a session has activity it glides up to its new place, and the others slide to make room.
-                        .animation(.spring(response: 0.5, dampingFraction: 0.84), value: rows.map { $0.id + String($0.rank) })
-                    } else {
+                    Group {
                         // Narrow: one column, repos one under another.
                         VStack(spacing: 2) {
                             ForEach(Array(rows.enumerated()), id: \.element.id) { i, s in
@@ -485,43 +701,6 @@ struct RootView: View {
             }
         }
         .frame(height: detached ? nil : Self.openHeight - model.barHeight)
-    }
-
-    struct Callout: Identifiable { let title: String; let items: [Session]; let accent: Bool; var id: String { title } }
-    /// What goes above the repos: sessions waiting on you or just finished, then the ones you pinned.
-    func callouts(_ rows: [Session]) -> [Callout] {
-        var out: [Callout] = []
-        let attention = rows.filter { $0.rank < 2 }.sorted { ($0.rank, -$0.updatedAt) < ($1.rank, -$1.updatedAt) }
-        if !attention.isEmpty { out.append(Callout(title: "For you", items: attention, accent: true)) }
-        let pins = rows.filter { model.pinned.contains($0.id) }
-        if !pins.isEmpty { out.append(Callout(title: "Pinned", items: pins, accent: false)) }
-        return out
-    }
-    func card<V: View>(_ title: String, count: Int, accent: Bool = false, @ViewBuilder _ content: () -> V) -> some View {
-        VStack(spacing: 2) {
-            repoHeader(title, count: count).padding(.top, 3)
-            content()
-        }
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 13).fill(.white.opacity(accent ? 0.06 : 0.045)))
-        .overlay(RoundedRectangle(cornerRadius: 13).stroke(accent ? PortalMark.lavender.opacity(0.38) : .white.opacity(0.07), lineWidth: 1))
-    }
-    /// A repo's sessions, with the never-used ones folded away behind a quiet line.
-    @ViewBuilder func repoRows(_ name: String, _ rows: [Session]) -> some View {
-        let mine = rows.filter { $0.project == name }, unused = mine.filter { $0.empty }
-        ForEach(mine.filter { !$0.empty }) { s in row(s, selected: false) }
-        if !unused.isEmpty {
-            if showUnused.contains(name) { ForEach(unused) { s in row(s, selected: false) } }
-            HStack {
-                Text(showUnused.contains(name) ? "hide unused" : "\(unused.count) opened but never used")
-                    .font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.32))
-                Spacer()
-            }
-            .padding(.leading, 35).padding(.vertical, 4)
-            .contentShape(Rectangle())
-            .modifier(PointerLink())
-            .onTapGesture { if showUnused.contains(name) { showUnused.remove(name) } else { showUnused.insert(name) } }
-        }
     }
 
     func repos(in rows: [Session]) -> [String] { var out: [String] = []; for s in rows where !out.contains(s.project) { out.append(s.project) }; return out }
@@ -555,7 +734,7 @@ struct RootView: View {
                 (Text((showRepo ? "\(s.project)  ·  " : "") + "\(s.statusText) \(s.age)" + (s.branch.map { "  ·  \($0)" } ?? "")) + Text(s.id == model.currentId ? "   you're here" : "").foregroundColor(PortalMark.lavender))
                     .font(.system(size: 11)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
                 // Where the session is. Shown in the stay-on-screen window, where there is room for it.
-                if detached, let recap = s.recap {
+                if detached, let recap = s.gist {
                     Text(recap).font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.66)).lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true).padding(.top, 2)
                 }
