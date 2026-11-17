@@ -1,0 +1,7 @@
+.build/
+*.vsix
+node_modules/
+.DS_Store
+*.xcodeproj/
+xcuserdata/
+DerivedData/
