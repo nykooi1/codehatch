@@ -311,6 +311,12 @@ final class Model: ObservableObject {
     @Published var currentId: String?   // the session you are in, when the editor helper can tell us
     @Published var notchWidth: CGFloat = 0
     @Published var barHeight: CGFloat = 26
+    /// Sessions you have pinned, remembered between launches.
+    @Published var pinned: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "pinned") ?? [])
+    func togglePin(_ id: String) {
+        if pinned.contains(id) { pinned.remove(id) } else { pinned.insert(id) }
+        UserDefaults.standard.set(Array(pinned), forKey: "pinned")
+    }
 
     var filtered: [Session] {
         let q = query.lowercased()
@@ -344,6 +350,7 @@ struct RootView: View {
     var detached = false   // true for the stay-on-screen window, false for the panel under the notch
     @FocusState private var searchFocused: Bool
     @State private var hovered: String?
+    @State private var showUnused: Set<String> = []   // repos whose never-used sessions are expanded
     static let openWidth: CGFloat = 640, openHeight: CGFloat = 470
 
     // Closed, the black shape is exactly the notch (or nothing, on a screen without one), so it can't be seen.
@@ -447,20 +454,22 @@ struct RootView: View {
             GeometryReader { geo in
                 let rows = model.filtered
                 ScrollView {
-                    if detached && geo.size.width >= 640 {
-                        // Wide enough for a board: one card per repo, as many across as fit.
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 300, maximum: 520), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
+                    if detached {
+                        // The stay-on-screen window: cards. One column when narrow, a board when wide.
+                        // First what wants your attention and what you've pinned, then one card per repo.
+                        let wide = geo.size.width >= 640
+                        LazyVGrid(columns: wide ? [GridItem(.adaptive(minimum: 300, maximum: 520), spacing: 12, alignment: .top)] : [GridItem(.flexible(), alignment: .top)],
+                                  alignment: .leading, spacing: wide ? 12 : 8) {
+                            ForEach(callouts(rows)) { c in
+                                card(c.title, count: c.items.count, accent: c.accent) { ForEach(c.items) { s in row(s, selected: false, showRepo: true) } }
+                            }
                             ForEach(repos(in: rows), id: \.self) { name in
-                                VStack(spacing: 2) {
-                                    repoHeader(name, count: rows.filter { $0.project == name }.count).padding(.top, 2)
-                                    ForEach(rows.filter { $0.project == name }) { s in row(s, selected: false) }
-                                }
-                                .padding(8)
-                                .background(RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.045)))
-                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.06), lineWidth: 1))
+                                card(name, count: rows.filter { $0.project == name && !$0.empty }.count) { repoRows(name, rows) }
                             }
                         }
-                        .padding(14)
+                        .padding(wide ? 14 : 10)
+                        // When a session has activity it glides up to its new place, and the others slide to make room.
+                        .animation(.spring(response: 0.5, dampingFraction: 0.84), value: rows.map { $0.id + String($0.rank) })
                     } else {
                         // Narrow: one column, repos one under another.
                         VStack(spacing: 2) {
@@ -478,6 +487,43 @@ struct RootView: View {
         .frame(height: detached ? nil : Self.openHeight - model.barHeight)
     }
 
+    struct Callout: Identifiable { let title: String; let items: [Session]; let accent: Bool; var id: String { title } }
+    /// What goes above the repos: sessions waiting on you or just finished, then the ones you pinned.
+    func callouts(_ rows: [Session]) -> [Callout] {
+        var out: [Callout] = []
+        let attention = rows.filter { $0.rank < 2 }.sorted { ($0.rank, -$0.updatedAt) < ($1.rank, -$1.updatedAt) }
+        if !attention.isEmpty { out.append(Callout(title: "For you", items: attention, accent: true)) }
+        let pins = rows.filter { model.pinned.contains($0.id) }
+        if !pins.isEmpty { out.append(Callout(title: "Pinned", items: pins, accent: false)) }
+        return out
+    }
+    func card<V: View>(_ title: String, count: Int, accent: Bool = false, @ViewBuilder _ content: () -> V) -> some View {
+        VStack(spacing: 2) {
+            repoHeader(title, count: count).padding(.top, 3)
+            content()
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 13).fill(.white.opacity(accent ? 0.06 : 0.045)))
+        .overlay(RoundedRectangle(cornerRadius: 13).stroke(accent ? PortalMark.lavender.opacity(0.38) : .white.opacity(0.07), lineWidth: 1))
+    }
+    /// A repo's sessions, with the never-used ones folded away behind a quiet line.
+    @ViewBuilder func repoRows(_ name: String, _ rows: [Session]) -> some View {
+        let mine = rows.filter { $0.project == name }, unused = mine.filter { $0.empty }
+        ForEach(mine.filter { !$0.empty }) { s in row(s, selected: false) }
+        if !unused.isEmpty {
+            if showUnused.contains(name) { ForEach(unused) { s in row(s, selected: false) } }
+            HStack {
+                Text(showUnused.contains(name) ? "hide unused" : "\(unused.count) opened but never used")
+                    .font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.32))
+                Spacer()
+            }
+            .padding(.leading, 35).padding(.vertical, 4)
+            .contentShape(Rectangle())
+            .modifier(PointerLink())
+            .onTapGesture { if showUnused.contains(name) { showUnused.remove(name) } else { showUnused.insert(name) } }
+        }
+    }
+
     func repos(in rows: [Session]) -> [String] { var out: [String] = []; for s in rows where !out.contains(s.project) { out.append(s.project) }; return out }
 
     func repoHeader(_ name: String, count: Int) -> some View {
@@ -489,7 +535,7 @@ struct RootView: View {
         .padding(.horizontal, 12).padding(.bottom, 3)
     }
 
-    func row(_ s: Session, selected: Bool) -> some View {
+    func row(_ s: Session, selected: Bool, showRepo: Bool = false) -> some View {
         HStack(alignment: .top, spacing: 11) {
             Group {
                 if s.rank == 2 { Orb() }
@@ -506,7 +552,7 @@ struct RootView: View {
                             .background(Capsule().fill(.white.opacity(0.09))).fixedSize()
                     }
                 }
-                (Text("\(s.statusText) \(s.age)" + (s.branch.map { "  ·  \($0)" } ?? "")) + Text(s.id == model.currentId ? "   you're here" : "").foregroundColor(PortalMark.lavender))
+                (Text((showRepo ? "\(s.project)  ·  " : "") + "\(s.statusText) \(s.age)" + (s.branch.map { "  ·  \($0)" } ?? "")) + Text(s.id == model.currentId ? "   you're here" : "").foregroundColor(PortalMark.lavender))
                     .font(.system(size: 11)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
                 // Where the session is. Shown in the stay-on-screen window, where there is room for it.
                 if detached, let recap = s.recap {
@@ -515,6 +561,7 @@ struct RootView: View {
                 }
             }
             Spacer()
+            if model.pinned.contains(s.id) { Image(systemName: "pin.fill").font(.system(size: 9)).foregroundStyle(.white.opacity(0.35)).padding(.top, 4) }
         }
         .padding(.horizontal, 12).padding(.vertical, 7)
         .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(selected ? 0.11 : hovered == s.id ? 0.06 : 0)))
@@ -524,6 +571,16 @@ struct RootView: View {
         }
         .modifier(PointerLink())
         .onTapGesture { dbg("row clicked: \(s.title)"); app?.go(s) }
+        .contextMenu {
+            Button(model.pinned.contains(s.id) ? "Unpin" : "Pin to top") { model.togglePin(s.id) }
+            if !s.empty {
+                Button("Copy resume command") {
+                    let cmd = s.tool == "codex" ? "codex resume \(s.id.replacingOccurrences(of: "codex-", with: ""))" : "claude --resume \(s.id)"
+                    NSPasteboard.general.clearContents(); NSPasteboard.general.setString(cmd, forType: .string)
+                }
+            }
+            Button("Show folder in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: s.cwd) }
+        }
     }
 }
 
