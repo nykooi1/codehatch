@@ -1,42 +1,79 @@
-# fathomed
+<p align="center"><img src="docs/images/icon.png" width="96" height="96" alt="codehatch"></p>
 
-A Mac app that shows every coding-agent session you have open and takes you to the one you want.
+<h1 align="center">codehatch</h1>
 
-Push the pointer into the notch, or press ⌥Space, and a panel drops down listing your open Claude Code sessions (Codex support is in progress), grouped by repo. Each one shows what it is, whether it is working, finished, waiting on you or idle, which git branch it is on, and a short recap of where it got to. Click one and its editor window and terminal tab come to the front.
+<p align="center">Every coding session, one click away.</p>
 
-It reads the files those tools already keep on your Mac. It never writes to them, and nothing leaves the machine.
+<p align="center"><img src="docs/images/notch-panel.jpg" width="720" alt="The codehatch panel open under a MacBook's notch, listing coding sessions"></p>
 
-## Status
+codehatch is a small Mac app for people who run several Claude Code and Codex sessions at once. Push the pointer into the
+notch (or press ⌥ Space) and a panel drops down with every session: what it is working on, whether it is working, finished
+or waiting on you, its branch, and the last thing said in it. Click one and you are on its exact terminal tab. Close a
+session, or restart your Mac, and it is still in the list, ready to resume.
 
-Early and private. This is a personal project.
+Beside the notch, an orb shows the most urgent thing going on: amber when a session needs you, green when one has just
+finished, blue while one is working.
 
-- `spike/` is a throwaway test app that the design was shaped on. It works, it has no tests, and it is not the product. The real app will be built alongside it and replace it.
+<p align="center">
+  <img src="docs/images/window-cards.jpg" width="49%" alt="The stay-on-screen window, as cards">
+  <img src="docs/images/window-list.jpg" width="49%" alt="The stay-on-screen window, as a list">
+</p>
 
-## Running the test app
+The same sessions can be popped out into their own window, as cards or as a list, and parked on a second monitor.
 
-Needs macOS 14 or later and Xcode's command-line tools.
+## Where it works
+
+| | Cursor and VS Code | Terminal and iTerm2 |
+|---|---|---|
+| See every session: state, branch, last message | ✓ | ✓ |
+| Go to a session | Lands on its exact terminal tab | Lands on its exact tab |
+| Highlight the session you are in | ✓ | ✓ |
+| Resume a closed session | In a new terminal tab, in the right project | In a new tab or window, in the right folder |
+
+Cursor and VS Code need a small helper extension, which codehatch offers to install the first time it runs.
+
+## Private by design
+
+codehatch runs entirely on your Mac. It reads the session records Claude Code and Codex already keep in your home folder,
+and the list of running programs. There is no account, no server and no AI model, and nothing about your work leaves the
+machine. Its one network request is a daily check for updates, which can be turned off.
+
+On first run it offers to add two small pieces, both plain files you can read and both removable in settings:
+
+- **Hooks** in Claude Code and Codex, so it learns the moment a session starts, stops or needs you. They record the event
+  only, never your prompts or replies. A copy of each settings file is saved first.
+- **A helper extension** in Cursor and VS Code, so it can land on the exact terminal tab.
+
+## Building it
+
+Needs macOS 14 or later and Xcode 16 or later.
 
 ```sh
-cd spike
-./run.sh
+cd app
+./run.sh            # build, and start it
+./run.sh --widget   # and open the stay-on-screen window
 ```
 
-That builds it, wraps it as an app, stops any old copy and starts the new one. Stop it with `pkill -x PortalSpike`.
+| Folder | What is in it |
+|---|---|
+| `app/Sources` | The app (Swift, SwiftUI and AppKit) |
+| `app/editor-helper` | The helper extension for Cursor and VS Code |
+| `app/hook` | The hook script Claude Code and Codex run |
+| `app/tests` | The tests (see below) |
+| `app/release.sh` | Builds, signs and packages a release, and writes the update feed |
+| `docs` | How it works, and images |
 
-Useful while developing:
-
-- `./run.sh --widget` also opens the stay-on-screen window.
-- `./run.sh --hold` opens the panel without taking the keyboard, so it can be screenshotted.
-- Its log is at `~/Library/Logs/fathomed-portal-spike.log`.
-
-## The editor helper
-
-`spike/editor-helper/` is a small extension for Cursor, VS Code and other editors built on VS Code. It does two things and has no interface: it shows a given terminal tab when the app asks, and it tells the app which terminal is in front. Without it the app still brings the right window forward; with it you land on the exact tab.
-
-To build and install it into Cursor:
+## Tests
 
 ```sh
-cd spike/editor-helper
-npx @vscode/vsce package --allow-missing-repository --skip-license
-/Applications/Cursor.app/Contents/Resources/app/bin/cursor --install-extension fathomed-portal-helper-*.vsix
+cd app
+python3 tests/run.py            # about a minute; opens nothing
+python3 tests/run.py --apps     # also drives the real Terminal, iTerm2 and VS Code
+python3 tests/run.py --live     # also starts real Claude Code and Codex sessions
 ```
+
+Every test works in a throwaway folder under `~/.codehatch-tests`, made fresh and removed afterwards.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).

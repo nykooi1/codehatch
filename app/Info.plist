@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>ai.codehatch.app</string>
+  <key>CFBundleName</key><string>codehatch</string>
+  <key>CFBundleExecutable</key><string>codehatch</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>0.0.1</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>SUFeedURL</key><string>https://codehatch.ai/appcast.xml</string>
+  <key>SUPublicEDKey</key><string>bU+rwNIdx/XfOg5vlSdQbuwXZbm3LgCjIwF8hSO4Jok=</string>
+  <key>SUEnableAutomaticChecks</key><true/>
+  <key>NSAppleEventsUsageDescription</key><string>To bring the right Terminal or iTerm2 tab to the front, and to resume a session in a new tab.</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>LSUIElement</key><true/>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+</dict>
+</plist>

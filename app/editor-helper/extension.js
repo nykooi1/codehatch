@@ -1,11 +1,12 @@
 // The whole helper.
 // 1. When the portal sends "focus?pids=...", show the terminal whose shell is one of those processes.
 // 2. Whenever this window is in front or its active terminal changes, note which terminal that is in
-//    ~/.fathomed/active-terminal.json, so the portal can mark the session you are in.
+//    ~/.codehatch/active-terminal.json, so the portal can mark the session you are in.
 // 3. When the portal sends "resume?...", reopen a closed session in a new terminal (see resume below).
+// 4. When the portal sends "panel?...", bring the Claude Code extension's chat panel forward (see panel below).
 const vscode = require("vscode");
 const fs = require("fs"), os = require("os"), path = require("path");
-const dir = path.join(os.homedir(), ".fathomed"), file = path.join(dir, "active-terminal.json");
+const dir = path.join(os.homedir(), ".codehatch"), file = path.join(dir, "active-terminal.json");
 
 async function report() {
   try {
@@ -35,11 +36,23 @@ function resume(q) {
   terminal.sendText(tool === "codex" ? `codex resume ${id}` : `claude --resume ${id}`, true);
 }
 
+// 4. When the portal sends "panel?cwd=...", bring the Claude Code extension's chat panel forward. That is where a
+//    session lives when it was started from the extension and so has no terminal tab. Only in the window that has
+//    that folder open. The extension offers no way to pick one conversation, so with several open it shows the last.
+async function panel(q) {
+  const cwd = q.get("cwd") || "";
+  const folders = (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath);
+  if (!folders.some((f) => cwd === f || cwd.startsWith(f + path.sep))) return;
+  try { await vscode.commands.executeCommand("claude-vscode.focus"); }
+  catch (_) { try { await vscode.commands.executeCommand("claude-vscode.editor.openLast"); } catch (_) {} }
+}
+
 function activate(context) {
   context.subscriptions.push(
     vscode.window.registerUriHandler({
       async handleUri(uri) {
         if (uri.path === "/resume") return resume(new URLSearchParams(uri.query));
+        if (uri.path === "/panel") return panel(new URLSearchParams(uri.query));
         if (uri.path !== "/focus") return;
         const pids = (new URLSearchParams(uri.query).get("pids") || "").split(",").map(Number).filter(Boolean);
         for (const terminal of vscode.window.terminals) {
