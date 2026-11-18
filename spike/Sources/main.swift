@@ -3,8 +3,6 @@
 import AppKit
 import SwiftUI
 import Carbon.HIToolbox
-import Speech
-import AVFoundation
 import SQLite3
 
 /// Notes for working out what went wrong, written to a file next to the build.
@@ -465,7 +463,7 @@ enum Closer {
 enum Prefs {
     static let defaults: [String: Any] = [
         "openOnHover": true, "hotkey": "opt-space", "showLastMessage": true, "showRecent": true, "recentDays": 14,
-        "showMic": true, "widgetOnTop": true, "confirmClose": true, "reopenIn": "auto", "demoMode": false, "hiddenRepos": "",
+        "widgetOnTop": true, "confirmClose": true, "reopenIn": "auto", "demoMode": false, "hiddenRepos": "",
     ]
     static func register() { UserDefaults.standard.register(defaults: defaults) }
     static func bool(_ k: String) -> Bool { UserDefaults.standard.bool(forKey: k) }
@@ -535,7 +533,6 @@ struct SettingsView: View {
     @AppStorage("showLastMessage") var showLastMessage = true
     @AppStorage("showRecent") var showRecent = true
     @AppStorage("recentDays") var recentDays = 14
-    @AppStorage("showMic") var showMic = true
     @AppStorage("widgetOnTop") var widgetOnTop = true
     @AppStorage("confirmClose") var confirmClose = true
     @AppStorage("reopenIn") var reopenIn = "auto"
@@ -549,7 +546,6 @@ struct SettingsView: View {
             }
             Section("What each session shows") {
                 Toggle("Your last message", isOn: $showLastMessage)
-                Toggle("Microphone button in search", isOn: $showMic)
             }
             Section("Closed sessions") {
                 Toggle("List recently closed sessions so they can be reopened", isOn: $showRecent)
@@ -591,13 +587,11 @@ struct SettingsView: View {
 // ── the interface ──
 struct RootView: View {
     @ObservedObject var model: Model
-    @ObservedObject var dictation: Dictation
     weak var app: AppDelegate?
     var detached = false   // true for the stay-on-screen window, false for the panel under the notch
     @FocusState private var searchFocused: Bool
     @State private var hovered: String?
     @AppStorage("showLastMessage") private var showLast = true
-    @AppStorage("showMic") private var showMic = true
     @AppStorage("confirmClose") private var confirmBusy = true
     @State private var overX: String?                 // the row whose x the pointer is on
     static let showX = CommandLine.arguments.contains("--show-x")   // for screenshots: show every row's x
@@ -700,11 +694,6 @@ struct RootView: View {
             Image(systemName: "magnifyingglass").font(.system(size: 13)).foregroundStyle(.white.opacity(0.45))
             TextField("", text: $model.query, prompt: Text("Search sessions").foregroundStyle(.white.opacity(0.35)))
                 .textFieldStyle(.plain).font(.system(size: 14)).foregroundStyle(.white).tint(.white)
-            if showMic {
-                Image(systemName: dictation.listening ? "mic.fill" : "mic").font(.system(size: 13))
-                    .foregroundStyle(dictation.listening ? PortalMark.lavender : .white.opacity(0.45))
-                    .contentShape(Rectangle().inset(by: -6)).onTapGesture { dictation.toggle() }.help("Speak your search")
-            }
             gear
         }
         .padding(.horizontal, 16).padding(.vertical, 9)
@@ -972,13 +961,6 @@ struct RootView: View {
                 TextField("", text: $model.query, prompt: Text("Search sessions").foregroundStyle(.white.opacity(0.35)))
                     .textFieldStyle(.plain).font(.system(size: 14)).foregroundStyle(.white).tint(.white)
                     .focused($searchFocused)
-                if showMic {
-                    Image(systemName: dictation.listening ? "mic.fill" : "mic").font(.system(size: 13))
-                        .foregroundStyle(dictation.listening ? PortalMark.lavender : .white.opacity(0.45))
-                        .contentShape(Rectangle().inset(by: -6))
-                        .onTapGesture { dictation.toggle() }
-                        .help("Speak your search")
-                }
                 if !detached {
                     Image(systemName: "macwindow.on.rectangle").font(.system(size: 13)).foregroundStyle(.white.opacity(0.45))
                         .contentShape(Rectangle().inset(by: -6))
@@ -1237,51 +1219,6 @@ struct PortalMark: View {
     }
 }
 
-// ── dictation: Apple's speech recognition, on this Mac, straight into the search field ──
-final class Dictation: NSObject, ObservableObject {
-    @Published var listening = false
-    var onText: (String) -> Void = { _ in }
-    var words: [String] = []   // repo names and titles, so they are heard correctly
-    private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
-    private let engine = AVAudioEngine()
-    private var request: SFSpeechAudioBufferRecognitionRequest?
-    private var task: SFSpeechRecognitionTask?
-
-    func toggle() { listening ? stop() : start() }
-    func start() {
-        SFSpeechRecognizer.requestAuthorization { status in
-            guard status == .authorized else { NSLog("speech recognition not allowed"); return }
-            AVCaptureDevice.requestAccess(for: .audio) { ok in
-                guard ok else { NSLog("microphone not allowed"); return }
-                DispatchQueue.main.async { self.begin() }
-            }
-        }
-    }
-    private func begin() {
-        guard let recognizer, recognizer.isAvailable, !listening else { return }
-        let req = SFSpeechAudioBufferRecognitionRequest()
-        req.shouldReportPartialResults = true
-        if recognizer.supportsOnDeviceRecognition { req.requiresOnDeviceRecognition = true }
-        req.contextualStrings = words
-        request = req
-        let input = engine.inputNode
-        input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { buf, _ in req.append(buf) }
-        engine.prepare()
-        do { try engine.start() } catch { NSLog("audio engine: \(error)"); return }
-        listening = true
-        task = recognizer.recognitionTask(with: req) { [weak self] result, error in
-            if let r = result { DispatchQueue.main.async { self?.onText(r.bestTranscription.formattedString) } }
-            if error != nil || result?.isFinal == true { DispatchQueue.main.async { self?.stop() } }
-        }
-    }
-    func stop() {
-        guard listening else { return }
-        engine.stop(); engine.inputNode.removeTap(onBus: 0)
-        request?.endAudio(); task?.cancel(); task = nil; request = nil; listening = false
-    }
-}
-
 // ── the window, the hotkey and what keys do ──
 final class KeyPanel: NSPanel { override var canBecomeKey: Bool { true } }
 /// Lets the very first click on the panel count as a click, instead of only waking the window up.
@@ -1297,7 +1234,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var byHover = false
     var hotKey: EventHotKeyRef?
     let queue = DispatchQueue(label: "sessions")
-    let dictation = Dictation()
 
     func applicationDidFinishLaunching(_ note: Notification) {
         AppDelegate.shared = self
@@ -1307,9 +1243,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.hidesOnDeactivate = false
-        panel.contentView = FirstClickHost(rootView: RootView(model: model, dictation: dictation, app: self))
+        panel.contentView = FirstClickHost(rootView: RootView(model: model, app: self))
         place()   // nothing is shown until the hotkey is pressed
-        dictation.onText = { [weak self] t in self?.model.query = t.trimmingCharacters(in: .punctuationCharacters) }
         registerHotKey()
         // For checking by screenshot: show the panel for a few seconds without taking the keyboard.
         // For checking by screenshot: open without taking the keyboard and stay open until the app is stopped.
@@ -1343,7 +1278,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let here = Loader.currentSession(among: s)
             if let here { Seen.at[here] = Date().timeIntervalSince1970 * 1000 }
             DispatchQueue.main.async {
-                self.model.sessions = s; self.model.recent = past; self.model.currentId = here; self.dictation.words = Array(Set(s.map(\.project) + s.map(\.title)))
+                self.model.sessions = s; self.model.recent = past; self.model.currentId = here
                 // Keep the highlight on the session you are in as fresh data arrives, until you move it yourself.
                 if self.model.open && !self.movedSelection && self.model.query.isEmpty {
                     self.model.selected = self.model.filtered.firstIndex { $0.id == here } ?? -1
@@ -1379,7 +1314,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     func close() {
         guard model.open else { return }
-        dictation.stop()
         withAnimation(.spring(response: 0.28, dampingFraction: 0.95)) { model.open = false }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) { if !self.model.open { self.panel.orderOut(nil) } }
     }
@@ -1421,7 +1355,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         w.isReleasedWhenClosed = false
         w.level = Prefs.bool("widgetOnTop") ? .floating : .normal
         w.collectionBehavior = [.fullScreenPrimary]
-        let host = FirstClickHost(rootView: RootView(model: model, dictation: dictation, app: self, detached: true))
+        let host = FirstClickHost(rootView: RootView(model: model, app: self, detached: true))
         // Otherwise SwiftUI replaces the window's minimum size with the content's own, which is far too small.
         host.sizingOptions = []
         w.contentView = host

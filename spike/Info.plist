@@ -9,7 +9,5 @@
   <key>CFBundleShortVersionString</key><string>0.0.1</string>
   <key>LSUIElement</key><true/>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
-  <key>NSMicrophoneUsageDescription</key><string>So you can speak your search instead of typing it.</string>
-  <key>NSSpeechRecognitionUsageDescription</key><string>Turns what you say into search text, on this Mac.</string>
 </dict>
 </plist>
