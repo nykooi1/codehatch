@@ -573,7 +573,7 @@ def test_defaults_and_menu(sb):
     """What a new user gets: cards grouped by state, nothing forced on top, hooks off until asked; and a way to quit."""
     d = dump(sb)
     want = {"widgetLayout": "cards", "widgetGroup": "state", "widgetFilter": "all", "widgetOnTop": False, "liveUpdates": False, "beaconShows": "orb",
-            "showBeacon": True, "openOnHover": True, "showRecent": True, "recentDays": 14, "notchOrder": "recent", "windowLook": "system", "confirmClose": True, "didSetup": False}
+            "showBeacon": True, "showMenuIcon": True, "openOnHover": True, "showRecent": True, "recentDays": 14, "notchOrder": "recent", "windowLook": "system", "confirmClose": True, "didSetup": False}
     eq({k: d["defaults"].get(k) for k in want}, want, "the defaults")
     menu = {m["title"]: m["key"] for m in d["menu"]}
     eq(menu.get("Quit codehatch"), "q", "Command-Q quits")

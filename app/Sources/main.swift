@@ -5,6 +5,7 @@ import SwiftUI
 import Carbon.HIToolbox
 import SQLite3
 import Sparkle
+import ServiceManagement
 
 /// Notes for working out what went wrong, written to a file next to the build.
 // Kept out of Documents on purpose: macOS asks for permission before an app touches that folder.
@@ -1116,6 +1117,7 @@ enum Setup {
 struct SetupView: View {
     var done: () -> Void
     @State private var hooks = true
+    @State private var atLogin = true
     @State private var editors: Set<String> = Set(Helper.present.map(\.id))
     @State private var results: [(what: String, problem: String?)]? = nil
     @State private var working = false
@@ -1151,6 +1153,12 @@ struct SetupView: View {
                                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         }
                     }
+                    Toggle(isOn: $atLogin) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Open at login").font(.system(size: 13, weight: .medium))
+                            Text("So it is there after you restart your Mac.").font(.callout).foregroundStyle(.secondary)
+                        }
+                    }
                     ForEach(Helper.present, id: \.id) { e in
                         Toggle(isOn: Binding(get: { editors.contains(e.id) }, set: { on in if on { editors.insert(e.id) } else { editors.remove(e.id) } })) {
                             VStack(alignment: .leading, spacing: 2) {
@@ -1169,13 +1177,14 @@ struct SetupView: View {
                     if working { ProgressView().controlSize(.small) }
                     Button("Set up") {
                         working = true
-                        let wantHooks = hooks, wantEditors = Array(editors)
+                        let wantHooks = hooks, wantEditors = Array(editors), wantLogin = atLogin
                         DispatchQueue.global().async {
-                            let r = Setup.run(hooks: wantHooks, editors: wantEditors)
+                            var r = Setup.run(hooks: wantHooks, editors: wantEditors)
+                            if wantLogin { r.append(("Open at login", LoginItem.set(true))) }
                             DispatchQueue.main.async { results = r; working = false }
                         }
                     }
-                    .keyboardShortcut(.defaultAction).disabled(working || (!hooks && editors.isEmpty))
+                    .keyboardShortcut(.defaultAction).disabled(working || (!hooks && !atLogin && editors.isEmpty))
                 }
             }
         }
@@ -1225,11 +1234,27 @@ enum Render {
     }
 }
 
+/// Opening codehatch when you log in, through the Mac's own login items (System Settings › General › Login Items).
+enum LoginItem {
+    static var on: Bool { SMAppService.mainApp.status == .enabled }
+    /// Returns nil when it worked, or what went wrong.
+    @discardableResult static func set(_ wanted: Bool) -> String? {
+        do {
+            if wanted { if SMAppService.mainApp.status != .enabled { try SMAppService.mainApp.register() } }
+            else if SMAppService.mainApp.status == .enabled { try SMAppService.mainApp.unregister() }
+            return nil
+        } catch {
+            dbg("login item: \(error)")
+            return "macOS would not change this. You can add codehatch in System Settings › General › Login Items."
+        }
+    }
+}
+
 enum Prefs {
     static let defaults: [String: Any] = [
         "openOnHover": true, "hotkey": "opt-space", "showLastMessage": true, "showRecent": true, "recentDays": 14,
         "widgetOnTop": false, "confirmClose": true, "reopenIn": "auto", "demoMode": false, "hiddenRepos": "", "notchOrder": "recent", "liveUpdates": false, "showBeacon": true, "beaconShows": "orb", "windowLook": "system",
-        "widgetLayout": "cards", "widgetGroup": "state", "widgetFilter": "all", "didSetup": false,
+        "showMenuIcon": true, "widgetLayout": "cards", "widgetGroup": "state", "widgetFilter": "all", "didSetup": false,
     ]
     static func register() { UserDefaults.standard.register(defaults: defaults) }
     static func bool(_ k: String) -> Bool { UserDefaults.standard.bool(forKey: k) }
@@ -1303,6 +1328,9 @@ struct SettingsView: View {
     @AppStorage("showBeacon") var showBeacon = true
     @AppStorage("beaconShows") var beaconShows = "orb"
     @State private var helperNote: [String: String] = [:]
+    @State private var loginOn = LoginItem.on
+    @AppStorage("showMenuIcon") var showMenuIcon = true
+    @State private var loginNote: String?
     @AppStorage("hotkey") var hotkey = "opt-space"
     @AppStorage("showLastMessage") var showLastMessage = true
     @AppStorage("showRecent") var showRecent = true
@@ -1324,6 +1352,9 @@ struct SettingsView: View {
             if page == 0 { Form {
             Section("Opening the panel") {
                 Toggle("Open when the pointer is pushed into the notch", isOn: $openOnHover)
+                Toggle("Show codehatch in the menu bar", isOn: $showMenuIcon)
+                Toggle("Open at login", isOn: Binding(get: { loginOn }, set: { want in loginNote = LoginItem.set(want); loginOn = LoginItem.on }))
+                if let loginNote { Text(loginNote).font(.callout).foregroundStyle(.secondary) }
                 Toggle("Show the current status beside the notch", isOn: $showBeacon)
                 Picker("Next to the orb, show", selection: $beaconShows) { Text("Nothing, just the orb").tag("orb"); Text("The session's name").tag("name"); Text("The state").tag("state") }.disabled(!showBeacon)
                 Picker("Keyboard shortcut", selection: $hotkey) { ForEach(Prefs.hotkeys, id: \.id) { Text($0.label).tag($0.id) } }
@@ -1430,6 +1461,7 @@ struct SettingsView: View {
         .onChange(of: hotkey) { _, _ in app?.registerHotKey() }
         .onChange(of: widgetOnTop) { _, on in app?.widget?.level = on ? .floating : .normal }
         .onChange(of: windowLook) { _, _ in app?.applyWindowLook() }
+        .onChange(of: showMenuIcon) { _, _ in app?.setUpStatusItem() }
         .onChange(of: recentDays) { _, _ in Loader.recentCache.at = 0; app?.refresh() }
         .onChange(of: showRecent) { _, _ in app?.refresh() }
         .onChange(of: demoMode) { _, _ in Demo.hidden = []; app?.refresh() }
@@ -2591,6 +2623,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.contentView = FirstClickHost(rootView: RootView(model: model, app: self))
         setUpBeacon()
         setUpMenu()
+        setUpStatusItem()
         if Setup.wanted || CommandLine.arguments.contains("--setup") { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.showSetup() } }
         if !Demo.on, ProcessInfo.processInfo.environment["CODEHATCH_HOME"] == nil { updater.startUpdater() }
         place()   // nothing is shown until the hotkey is pressed
@@ -2640,7 +2673,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// does nothing at all while nothing is happening.
     func watch() {
         let home = Loader.home.path
-        let paths = ["\(home)/.claude/sessions", "\(home)/.codehatch"] as CFArray
+        // Codex keeps no small status file per session as Claude Code does, but it writes each session's log as it goes,
+        // under ~/.codex/sessions; watching that folder catches a Codex session starting, finishing or stopping for you
+        // as soon as it happens, hooks or not.
+        let paths = ["\(home)/.claude/sessions", "\(home)/.codehatch", "\(home)/.codex"].filter { FileManager.default.fileExists(atPath: $0) } as CFArray
         var ctx = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(), retain: nil, release: nil, copyDescription: nil)
         let flags = UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer | kFSEventStreamCreateFlagUseCFTypes)
         guard let st = FSEventStreamCreate(nil, { _, info, _, paths, _, _ in
@@ -2658,10 +2694,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         FSEventStreamStart(st)
         stream = st
     }
+    /// A Codex log grows with every step of a turn. Only the steps that change what is shown count: a turn starting or
+    /// ending, a prompt, an interruption, or a request for approval. Everything else Codex writes there is ignored.
+    var codexSaid: [String: String] = [:]
+    func codexMatters(_ path: String) -> Bool {
+        guard (path as NSString).lastPathComponent.hasPrefix("rollout-"), path.hasSuffix(".jsonl") else { return false }   // its database and other files
+        guard let h = FileHandle(forReadingAtPath: path) else { return codexSaid.removeValue(forKey: path) != nil }
+        defer { try? h.close() }
+        let size = (try? h.seekToEnd()) ?? 0
+        try? h.seek(toOffset: size > 8192 ? size - 8192 : 0)
+        let tail = String(decoding: h.readDataToEndOfFile(), as: UTF8.self)
+        let kinds = ["task_started", "task_complete", "turn_aborted", "user_message", "exec_approval_request", "apply_patch_approval_request"]
+        let last = tail.split(separator: "\n").reversed().compactMap { line in kinds.first { line.contains("\"\($0)\"") } }.first ?? ""
+        if codexSaid[path] == last { return false }
+        codexSaid[path] = last
+        return true
+    }
     /// What each session file last said that the interface shows: its state, what it waits for, and its name.
     var said: [String: String] = [:]
     /// True if this changed file means the list needs reloading.
     func matters(_ path: String) -> Bool {
+        if path.contains("/.codex/") { return codexMatters(path) }
         guard path.contains("/.claude/sessions/"), path.hasSuffix(".json") else { return true }   // the helper's note, or anything unexpected
         guard let data = FileManager.default.contents(atPath: path), let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return said.removeValue(forKey: path) != nil || !FileManager.default.fileExists(atPath: path)   // gone, or half-written
@@ -2738,6 +2791,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return main
     }
     @objc func openSettingsFromMenu() { showSettings() }
+
+    /// The codehatch mark in the menu bar, the usual home for a utility like this: click it for the panel and the
+    /// window, settings, and quitting. It can be hidden in settings.
+    var statusItem: NSStatusItem?
+    func setUpStatusItem() {
+        guard Prefs.bool("showMenuIcon") else { statusItem.map { NSStatusBar.system.removeStatusItem($0) }; statusItem = nil; return }
+        guard statusItem == nil else { return }
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if let url = Bundle.main.url(forResource: "portal", withExtension: "png"), let mark = NSImage(contentsOf: url) {
+            mark.size = NSSize(width: 16, height: 16); mark.isTemplate = true   // drawn in the menu bar's own colour
+            item.button?.image = mark
+        } else { item.button?.title = "ch" }
+        item.button?.toolTip = "codehatch"
+        let menu = NSMenu()
+        func add(_ title: String, _ action: Selector, _ key: String = "") { let i = NSMenuItem(title: title, action: action, keyEquivalent: key); i.target = self; menu.addItem(i) }
+        add("Show sessions", #selector(menuShowPanel))
+        add("Open the window", #selector(menuToggleWindow))
+        menu.addItem(.separator())
+        add("Settings…", #selector(openSettingsFromMenu), ",")
+        add("Check for updates…", #selector(menuCheckUpdates))
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Quit codehatch", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        item.menu = menu
+        statusItem = item
+    }
+    @objc func menuShowPanel() { DispatchQueue.main.async { self.open(byHover: false) } }
+    @objc func menuToggleWindow() { toggleWidget() }
+    @objc func menuCheckUpdates() { updater.checkForUpdates(nil) }
     var beacon: NSPanel!
     /// Sparkle. It looks at the feed on codehatch.ai about once a day, and when there is a newer version, checks its
     /// signature against the key in Info.plist, offers it, and installs it. Not started in the tests or the demo.
