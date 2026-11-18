@@ -2,6 +2,7 @@
 // 1. When the portal sends "focus?pids=...", show the terminal whose shell is one of those processes.
 // 2. Whenever this window is in front or its active terminal changes, note which terminal that is in
 //    ~/.fathomed/active-terminal.json, so the portal can mark the session you are in.
+// 3. When the portal sends "resume?...", reopen a closed session in a new terminal (see resume below).
 const vscode = require("vscode");
 const fs = require("fs"), os = require("os"), path = require("path");
 const dir = path.join(os.homedir(), ".fathomed"), file = path.join(dir, "active-terminal.json");
@@ -17,10 +18,28 @@ async function report() {
   } catch (_) {}
 }
 
+// 3. When the portal sends "resume?tool=...&id=...&cwd=...", open a new terminal in this window and resume that
+//    session in it. The command is built here from a checked session id, never taken from the link, and it only
+//    runs if this window has that folder open, so a link can do nothing except reopen one of your own sessions.
+const resumed = new Map();
+function resume(q) {
+  const tool = q.get("tool"), id = q.get("id") || "", cwd = q.get("cwd") || "";
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return;
+  if (tool !== "claude" && tool !== "codex") return;
+  const folders = (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath);
+  if (!folders.some((f) => cwd === f || cwd.startsWith(f + path.sep))) return;   // not this window's project
+  if (Date.now() - (resumed.get(id) || 0) < 60000) return;                       // the portal sends the link more than once
+  resumed.set(id, Date.now());
+  const terminal = vscode.window.createTerminal({ cwd });
+  terminal.show(false);
+  terminal.sendText(tool === "codex" ? `codex resume ${id}` : `claude --resume ${id}`, true);
+}
+
 function activate(context) {
   context.subscriptions.push(
     vscode.window.registerUriHandler({
       async handleUri(uri) {
+        if (uri.path === "/resume") return resume(new URLSearchParams(uri.query));
         if (uri.path !== "/focus") return;
         const pids = (new URLSearchParams(uri.query).get("pids") || "").split(",").map(Number).filter(Boolean);
         for (const terminal of vscode.window.terminals) {
