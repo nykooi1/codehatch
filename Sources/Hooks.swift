@@ -165,6 +165,8 @@ enum Hooks {
     static let codexEvents = ["SessionStart", "UserPromptSubmit", "PermissionRequest", "PostToolUse", "Stop", "Interrupt", "SessionEnd"]
     static var codexHooks: URL { home.appendingPathComponent(".codex/hooks.json") }
     static var hasCodex: Bool { FileManager.default.fileExists(atPath: home.appendingPathComponent(".codex").path) }
+    /// Claude Code has been used on this Mac: it keeps its settings and sessions in ~/.claude.
+    static var hasClaude: Bool { FileManager.default.fileExists(atPath: home.appendingPathComponent(".claude").path) }
     static func installCodex() -> Bool {
         guard hasCodex else { return true }
         guard let current = readJSON(codexHooks) else { dbg("hooks: Codex hooks file is not valid JSON; left alone"); return false }

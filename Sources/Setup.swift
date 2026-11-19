@@ -84,7 +84,10 @@ struct SetupView: View {
                     ForEach(Array(results.enumerated()), id: \.offset) { _, r in
                         if r.what == "Live updates", r.problem == nil {
                             // Say plainly what works now: Claude Code needs nothing more; Codex needs its one approval.
-                            resultRow(.done, "Claude Code is ready", "Live updates are on for sessions you start from now on.")
+                            // Each tool is named only if it has been used on this Mac.
+                            if Hooks.hasClaude {
+                                resultRow(.done, "Claude Code is ready", "Live updates are on for sessions you start from now on.")
+                            }
                             if Hooks.hasCodex {
                                 resultRow(.todo, "Codex: one step left", "In a Codex session, type /hooks and approve codehatch's. Codex asks before it runs new hooks.")
                             }
