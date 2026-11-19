@@ -2786,8 +2786,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     var sawPointer = false
     /// Tell each window's pointer tracker where the pointer is now, in that window's own coordinates.
+    private var pointerWasOver = false
     func followPointer() {
         let m = NSEvent.mouseLocation
+        // Away from all of codehatch's windows there is nothing to do, beyond clearing a highlight once on the way out.
+        let over = [model.open ? panel : nil, widget, menuPanel].contains { $0?.isVisible == true && $0!.frame.contains(m) }
+        if !over && !pointerWasOver { return }
+        pointerWasOver = over
         func inside(_ w: NSWindow?) -> CGPoint? {
             guard let w, w.isVisible, let v = w.contentView, w.frame.contains(m) else { return nil }
             return v.convert(w.convertPoint(fromScreen: m), from: nil)
