@@ -5,7 +5,7 @@
 **Every coding session, one click away.**
 
 A Mac app for people who run several **Claude Code** and **Codex** sessions at once. Push the pointer into the notch and
-a panel drops down with **every session**: what it is working on, whether it is working, finished or waiting on you, and
+a panel drops down with **every session, from every terminal and editor**: what it is working on, whether it is working, finished or waiting on you, and
 the last thing said in it. Click one and you are on its exact terminal tab.
 
 Close a session, or restart your Mac, and it is still in the list, ready to resume where you left it.
