@@ -3005,7 +3005,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let screen = bw.screen ?? NSScreen.main ?? self.screen
         var x = bw.frame.minX - 6
         x = min(max(x, screen.visibleFrame.minX + 6), screen.visibleFrame.maxX - size.width - 6)
-        p.setFrame(NSRect(x: x, y: bw.frame.minY - size.height - 6, width: size.width, height: size.height), display: true)
+        p.setFrame(NSRect(x: x, y: bw.frame.minY - size.height - 1, width: size.width, height: size.height), display: true)
         p.makeKeyAndOrderFront(nil)
         button.highlight(true)
     }
@@ -3062,10 +3062,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let bar = max(24, s.frame.maxY - s.visibleFrame.maxY)
         var notch: CGFloat = 0
         if let l = s.auxiliaryTopLeftArea, let r = s.auxiliaryTopRightArea { notch = max(0, s.frame.width - l.width - r.width) }
-        // At least as tall as the notch, and the menu bar's height where that is taller (here the notch measures 33
-        // points and the menu bar 34). The black is drawn right across the notch, so its bottom edge is the only one
-        // that shows; were it shorter than the real notch, the notch's own edge would show a point lower beside it.
-        let height = max(s.safeAreaInsets.top, bar)
+        // Exactly the notch's height (33 points here, where the menu bar is 34), the same height the panel closes to.
+        // A point taller showed as a black edge under the notch that appeared when the closed panel left the screen.
+        let height = s.safeAreaInsets.top > 0 ? s.safeAreaInsets.top : bar
         model.beaconNotch = notch
         beacon.setFrame(NSRect(x: s.frame.midX - notch / 2 - 200 - TabShape.flare, y: s.frame.maxY - height, width: 200 + TabShape.flare + notch, height: height), display: true)
     }
@@ -3110,12 +3109,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model.selected = model.filtered.firstIndex { $0.id == model.currentId } ?? -1
         place()
         // Always take focus, even when opened by the pointer: a window that isn't focused swallows the first click and won't change the cursor.
+        NSAnimationContext.runAnimationGroup { c in c.duration = 0; self.panel.animator().alphaValue = 1 }   // after a fade-out
         if peeking { panel.orderFrontRegardless() } else { panel.makeKeyAndOrderFront(nil) }
         DispatchQueue.main.async { withAnimation(.spring(response: 0.42, dampingFraction: 0.92)) { self.model.open = true } }
     }
     func close() {
         guard model.open else { return }
-        withAnimation(.spring(response: 0.45, dampingFraction: 1.0)) { model.open = false }
+        // Quick, with no long tail: the contents are gone well before the shape, and a slow last stretch left an empty
+        // black box hanging under the notch for a moment after it looked closed.
+        withAnimation(.spring(response: 0.32, dampingFraction: 1.0)) { model.open = false }
+        // The tab with the orb is its own window, so the shrinking shape cannot land on it as one piece; its last
+        // stretch hung under the notch as a separate black box after the list had gone. So the panel fades out over
+        // that last stretch instead: over the notch it is black on black, and below it there is nothing left to see.
+        // The spring is three quarters of the way in at 0.15s and nine tenths at 0.2s, so the fade covers only that tail.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            guard !self.model.open else { return }
+            NSAnimationContext.runAnimationGroup { c in c.duration = 0.1; c.timingFunction = CAMediaTimingFunction(name: .easeIn); self.panel.animator().alphaValue = 0 }
+        }
         // The window leaves the screen only once the shape has finished shrinking into the notch. The closing spring
         // takes about 0.7s to settle; taken away sooner, the last sliver of the panel was cut off mid-move.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { if !self.model.open { self.panel.orderOut(nil) } }
