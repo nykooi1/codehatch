@@ -431,8 +431,9 @@ def test_app_terminal_real_claude(sb):
     before = set(osa(IDS["terminal"]).split())
     ttys = []
     try:
-        # Started with the env markers of any surrounding Claude session removed, as a person would start it.
-        tty = osa(sc["open"], "cd '%s' && env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_SSE_PORT claude" % repo); ttys.append(tty)
+        # Started with every marker of a surrounding Claude session removed (any CLAUDE... variable), as a person would
+        # start it: started from inside one, Claude Code treats itself as a child session and saves nothing.
+        tty = osa(sc["open"], "cd '%s' && for v in $(env | grep -o '^CLAUDE[A-Z_]*='); do unset ${v%%=}; done; claude" % repo); ttys.append(tty)
         time.sleep(6)
         # A folder Claude Code has not seen asks whether to trust it; choose "Yes" (down, then return).
         osa('on run argv\n tell application "Terminal"\n repeat with w in windows\n try\n if (tty of selected tab of w) is (item 1 of argv) then do script (ASCII character 27) & "[B" in selected tab of w\n end try\n end repeat\n end tell\nend run', tty)
@@ -441,7 +442,12 @@ def test_app_terminal_real_claude(sb):
                 if s["tool"] == "claude" and os.path.realpath(s["cwd"]) == os.path.realpath(repo):
                     return s
         import run
-        s = wait("the real session to be listed", listed, timeout=45)
+        try:
+            s = wait("the real session to be listed", listed, timeout=45)
+        except AssertionError:
+            # Say what the session's window shows, so a failure here can be understood.
+            shown = osa('on run argv\n tell application "Terminal"\n repeat with w in windows\n try\n if (tty of selected tab of w) is (item 1 of argv) then return contents of selected tab of w\n end try\n end repeat\n end tell\nend run', tty)
+            raise AssertionError("the real session was not listed. Its window shows: " + " | ".join(l.strip() for l in shown.splitlines() if l.strip())[-400:])
         other = osa(sc["open"], "cd '%s' && sleep 931" % repo); ttys.append(other)
         eq(osa(sc["front"]), other, "another window is in front")
         out = subprocess.run([APP, "--focus-terminal", str(s["pid"])], capture_output=True, text=True, timeout=60).stdout.strip()
