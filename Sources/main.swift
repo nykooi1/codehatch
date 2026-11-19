@@ -3031,7 +3031,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSSize(width: max(size.width, Self.widgetMin.width), height: max(size.height, Self.widgetMin.height))
     }
     func toggleWidget() {
-        if let w = widget { w.close(); return }
+        // Already open: bring it forward rather than closing it. It is often behind other windows, minimised or on
+        // another screen, so closing it made the first click look like it did nothing and needed a second one.
+        if let w = widget {
+            close()
+            if w.isMiniaturized { w.deminiaturize(nil) }
+            NSApp.activate(ignoringOtherApps: true)
+            w.makeKeyAndOrderFront(nil)
+            return
+        }
         // The notch panel closes first. The window shares its model, so a window made before that would have caught the
         // panel's closing animation and slid its contents about as it appeared.
         close()
