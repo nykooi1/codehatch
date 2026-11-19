@@ -1323,11 +1323,22 @@ enum Demo {
         ("d7", "api-server", "Upgrade to the new Postgres driver", "idle", 97_000, "chore/pg-driver", "hold off until after the release", "Paused. The upgrade works locally; two integration tests still fail on connection pooling.", nil),
         ("d8", "docs-site", "Rewrite the getting-started guide", "idle", 20_000, "docs/getting-started", "shorter, and lead with the install command", "First draft is written. Next: you read it through for tone.", nil),
     ]
-    static let closedRows: [(String, String, String, Double, String, String)] = [
-        ("c1", "storefront", "Fix the cart badge count", 5_200, "fix/cart-badge", "ship it"),
-        ("c2", "api-server", "Webhook retries with backoff", 30_000, "feature/webhook-retries", "add a test for the fifth retry"),
-        ("c3", "ios-app", "Dark mode for settings", 180_000, "feature/settings-dark-mode", "the toggles are too dim"),
-        ("c4", "docs-site", "Broken links in the API reference", 260_000, "fix/api-ref-links", "run the link checker again"),
+    // Recently closed sample sessions: id, repo, title, seconds since, branch, what you last asked, where it got to.
+    static let closedRows: [(String, String, String, Double, String, String, String)] = [
+        ("3f2a9c1e-7b4d-4e8a-9c21-5d6e7f8a9b01", "storefront", "Fix the cart badge count", 2_400, "fix/cart-badge", "ship it",
+         "The badge now counts items rather than lines, and updates as soon as something is added. Merged."),
+        ("8b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d02", "api-server", "Webhook retries with backoff", 9_000, "feature/webhook-retries", "add a test for the fifth retry",
+         "Failed webhooks are retried up to five times, waiting longer each time. The test for the fifth retry is the last thing open."),
+        ("c4d5e6f7-a8b9-4c0d-9e1f-2a3b4c5d6e03", "ios-app", "Dark mode for settings", 18_000, "feature/settings-dark-mode", "the toggles are too dim",
+         "Settings follow the system's dark mode. The toggles are brighter; the last thing to check is the colour of the section headers."),
+        ("d7e8f9a0-b1c2-4d3e-8f4a-5b6c7d8e9f04", "storefront", "Faster product images", 30_000, "perf/product-images", "use the smaller sizes on phones",
+         "Product images load in the size each screen needs. Phones now download about a third as much."),
+        ("e1f2a3b4-c5d6-4e7f-9a8b-0c1d2e3f4a05", "api-server", "Rotate the signing keys", 64_000, "chore/rotate-keys", "keep the old key valid for a day",
+         "New keys are in use. The old one is still accepted until tomorrow, then it can be removed."),
+        ("f5a6b7c8-d9e0-4f1a-8b2c-3d4e5f6a7b06", "docs-site", "Broken links in the API reference", 150_000, "fix/api-ref-links", "run the link checker again",
+         "Fixed 14 broken links. The link checker now runs on every change, so new ones are caught before they go live."),
+        ("a9b0c1d2-e3f4-4a5b-9c6d-7e8f9a0b1c07", "ios-app", "Pull to refresh on the orders screen", 240_000, "feature/orders-refresh", "add the little haptic when it lets go",
+         "Pulling down on the orders screen refreshes it, with a light tap of feedback as it lets go."),
     ]
     static func sessions() -> [Session] {
         let now = Date().timeIntervalSince1970
@@ -1341,8 +1352,11 @@ enum Demo {
     static func closed() -> [Session] {
         let now = Date().timeIntervalSince1970
         return closedRows.map { r in
-            var s = Session(id: r.0, pid: 0, cwd: "/Projects/" + r.1, status: "closed", updatedAt: (now - r.3) * 1000, title: r.2)
-            s.branch = r.4; s.lastAsked = r.5
+            // Its folder: the matching made-up project in ~/codehatch-demo if there is one, so resuming it for a recording
+            // lands somewhere real.
+            let demo = NSHomeDirectory() + "/codehatch-demo/" + r.1
+            var s = Session(id: r.0, pid: 0, cwd: FileManager.default.fileExists(atPath: demo) ? demo : "/Projects/" + r.1, status: "closed", updatedAt: (now - r.3) * 1000, title: r.2)
+            s.branch = r.4; s.lastAsked = r.5; s.recap = r.6
             return s
         }
     }
