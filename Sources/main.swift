@@ -849,8 +849,8 @@ struct Beacon: View {
                 .frame(maxHeight: .infinity)
                 .background(TabShape(far: model.beaconNotch > 0 ? 12 : 10).fill(.black))
                 .background(GeometryReader { g in Color.clear
-                    .onAppear { model.tabWidth = g.size.width }
-                    .onChange(of: g.size.width) { _, w in model.tabWidth = w }
+                    .onAppear { withAnimation(Self.spring) { model.tabWidth = g.size.width } }
+                    .onChange(of: g.size.width) { _, w in withAnimation(Self.spring) { model.tabWidth = w } }
                     .onDisappear { model.tabWidth = 0 } })
                 .contentShape(Rectangle())
                 
@@ -869,9 +869,15 @@ struct Beacon: View {
         // Back only as the panel finishes shrinking into it, not over the panel's title while it is still closing.
         .animation(model.open ? nil : .easeOut(duration: 0.12).delay(0.22), value: model.open)
         .transaction(value: model.open) { $0.animation = nil }
-        .animation(.spring(response: 0.42, dampingFraction: 0.92), value: model.spotlight?.rank)
-        .animation(.spring(response: 0.42, dampingFraction: 0.92), value: model.spotlight?.id)
+        .animation(Self.spring, value: model.spotlight?.rank)
+        .animation(Self.spring, value: model.spotlight?.id)
+        // As the tab starts sliding back into the notch, the black behind it (the panel's closed shape) shrinks with it,
+        // in step. Left until the tab had gone, that black stayed out on its own and then vanished at once.
+        .onChange(of: wanted && model.spotlight != nil) { _, showing in
+            if !showing { withAnimation(Self.spring) { model.tabWidth = 0 } }
+        }
     }
+    static let spring = Animation.spring(response: 0.42, dampingFraction: 0.92)
 }
 
 // ── hooks: the supported way to be told what a session is doing ──
@@ -1309,7 +1315,7 @@ enum Prefs {
     static func bool(_ k: String) -> Bool { UserDefaults.standard.bool(forKey: k) }
     static func string(_ k: String) -> String { UserDefaults.standard.string(forKey: k) ?? "" }
     static func int(_ k: String) -> Int { UserDefaults.standard.integer(forKey: k) }
-    /// Repo names that are never shown, lower-cased. Typed in settings separated by commas.
+    /// Repo names that are never shown, lower-cased. Added one at a time in settings and stored one per line.
     static var hiddenRepos: Set<String> {
         Set(string("hiddenRepos").lowercased().split(whereSeparator: { $0 == "," || $0 == "\n" }).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
     }
@@ -1403,6 +1409,22 @@ struct SettingsView: View {
     @AppStorage("reopenIn") var reopenIn = "auto"
     @AppStorage("demoMode") var demoMode = false
     @AppStorage("hiddenRepos") var hiddenRepos = ""
+    @State private var newHidden = ""
+    /// The hidden repos as a list, in the order they were added. Stored one per line (older copies used commas).
+    var hiddenList: [String] {
+        var out: [String] = []
+        for part in hiddenRepos.split(whereSeparator: { $0 == "," || $0 == "\n" }) {
+            let name = part.trimmingCharacters(in: .whitespaces)
+            if !name.isEmpty, !out.contains(where: { $0.lowercased() == name.lowercased() }) { out.append(name) }
+        }
+        return out
+    }
+    func addHidden() {
+        let name = newHidden.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        hiddenRepos = (hiddenList + [name]).joined(separator: "\n")   // a repeat is dropped by hiddenList
+        newHidden = ""
+    }
     @AppStorage("notchOrder") var notchOrder = "recent"
     @AppStorage("liveUpdates") var liveUpdates = false
     @State private var hookProblem: String?
@@ -1507,9 +1529,22 @@ struct SettingsView: View {
             .formStyle(.grouped) }
             if page == 2 { Form {
             Section {
-                TextField("Never show these repos", text: $hiddenRepos, prompt: Text("client-site, internal-tools"))
-            } header: { Text("Privacy") } footer: {
-                Text("Repo folder names, separated by commas. Their sessions are left out everywhere, open or closed.")
+                ForEach(hiddenList, id: \.self) { name in
+                    HStack {
+                        Text(name)
+                        Spacer()
+                        Button { hiddenRepos = hiddenList.filter { $0 != name }.joined(separator: "\n") } label: {
+                            Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.borderless).help("Show this repo again")
+                    }
+                }
+                HStack {
+                    TextField("Hide a repo", text: $newHidden, prompt: Text("Folder name, like client-site")).onSubmit(addHidden)
+                    Button("Add", action: addHidden).disabled(newHidden.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            } header: { Text("Never show these repos") } footer: {
+                Text("Sessions in these repo folders are left out everywhere, open or closed.")
             }
             Section {
                 Toggle("Show sample sessions instead of mine", isOn: $demoMode)
@@ -2419,7 +2454,9 @@ struct OutOfNotch: ViewModifier, Animatable {
         content
             .mask(alignment: .trailing) {
                 GeometryReader { g in
-                    Rectangle().frame(width: notch + max(0, g.size.width - notch) * max(0, shown)).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+                    // The tab's own outline, not a straight cut: its rounded corner and top flare travel with the edge,
+                    // so going back in it looks like the notch itself shrinking, with no square corner on the way.
+                    TabShape(far: 0).frame(width: notch + max(0, g.size.width - notch) * max(0, shown)).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
                 }
             }
             .opacity(notch > 0 ? 1 : Double(min(1, shown * 1.5)))   // without a notch to come out of, it also fades
@@ -2514,9 +2551,13 @@ struct Hovering<Content: View>: View {
 /// is the notch, with no sliver lingering around it and no moment where the shape is narrower than the notch.
 struct Grow: ViewModifier, Animatable {
     var progress: CGFloat
-    let closed: CGSize
+    var closed: CGSize
     let open: CGSize
-    var animatableData: CGFloat { get { progress } set { progress = newValue } }
+    // The closed width moves too: it follows the tab beside the notch as it grows out and slides back in.
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(progress, closed.width) }
+        set { progress = newValue.first; closed.width = newValue.second }
+    }
     func body(content: Content) -> some View {
         let q = max(0, min(1, (progress - 0.035) / 0.95))
         content.frame(width: closed.width + (open.width - closed.width) * q, height: closed.height + (open.height - closed.height) * q, alignment: .top)
@@ -2526,8 +2567,11 @@ struct Grow: ViewModifier, Animatable {
 /// Moves the panel sideways in step with Grow: by `closed` when closed, not at all when open.
 struct Shift: ViewModifier, Animatable {
     var progress: CGFloat
-    let closed: CGFloat
-    var animatableData: CGFloat { get { progress } set { progress = newValue } }
+    var closed: CGFloat
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(progress, closed) }
+        set { progress = newValue.first; closed = newValue.second }
+    }
     func body(content: Content) -> some View {
         let q = max(0, min(1, (progress - 0.035) / 0.95))
         content.offset(x: closed * (1 - q))
