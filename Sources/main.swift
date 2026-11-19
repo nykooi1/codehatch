@@ -2206,8 +2206,8 @@ struct RootView: View {
                 HStack(spacing: 7) {
                     Text(s.title).font(.system(size: 13, weight: .medium)).foregroundStyle(ink.opacity(0.95)).lineLimit(1)
                 }
-                (repoText(showRepo ? s.project : "") + branchText(s.branch, lead: showRepo ? "  ·  " : ""))
-                    .font(.system(size: 11)).foregroundStyle(ink.opacity(0.45)).lineLimit(1)
+                (repoText(showRepo ? s.project : "", tone: 0.75) + branchText(s.branch, lead: showRepo ? "  ·  " : "", tone: 0.75))
+                    .font(.system(size: 11.5)).foregroundStyle(ink.opacity(0.75)).lineLimit(1)
                 // In the notch panel: the last thing you typed there, on one line, cut short if it is long.
                 if !detached, showLast, let asked = s.lastMessage {
                     Text(asked).font(.system(size: 11.5)).foregroundStyle(ink.opacity(0.62)).lineLimit(1).truncationMode(.tail)
