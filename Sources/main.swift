@@ -542,6 +542,8 @@ final class Model: ObservableObject {
     @Published var repoFilter: String? = nil
     /// The width of the notch the status tab sits beside (the built-in display's), or 0 on a Mac without one.
     @Published var beaconNotch: CGFloat = 0
+    /// The width of the tab with the orb, including the part over the notch (0 while it is not showing).
+    @Published var tabWidth: CGFloat = 0
     /// The repos that have open sessions, the most recently touched first, for the filter chips.
     var repoNames: [String] {
         var out: [String] = []
@@ -776,6 +778,18 @@ enum Terminals {
     }
 }
 
+/// The tab placed in the notch's window: its right end is the notch's right edge, so it reaches out to the left.
+struct NotchTab: View {
+    @ObservedObject var model: Model
+    var body: some View {
+        let reach = 200 + TabShape.flare
+        Beacon(model: model)
+            .frame(width: reach + model.beaconNotch, height: model.notchHeight > 0 ? model.notchHeight : model.barHeight)
+            .offset(x: -reach / 2)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
+
 /// What the beacon beside the notch shows: the orb and a word, on a black tab that reads as part of the notch.
 /// The word is needed: a bare green dot beside the camera is what macOS shows when the camera is recording.
 struct Beacon: View {
@@ -834,6 +848,10 @@ struct Beacon: View {
                 .padding(.leading, 12 + TabShape.flare).padding(.trailing, 9 + (model.beaconNotch > 0 ? model.beaconNotch : 4))
                 .frame(maxHeight: .infinity)
                 .background(TabShape(far: model.beaconNotch > 0 ? 12 : 10).fill(.black))
+                .background(GeometryReader { g in Color.clear
+                    .onAppear { model.tabWidth = g.size.width }
+                    .onChange(of: g.size.width) { _, w in model.tabWidth = w }
+                    .onDisappear { model.tabWidth = 0 } })
                 .contentShape(Rectangle())
                 
                 .onTapGesture(perform: clicked)
@@ -848,6 +866,8 @@ struct Beacon: View {
         // either window in front of the other (swiping between desktops, for one). It is simply back as the panel closes,
         // with no fade or slide.
         .opacity(model.open ? 0 : 1)
+        // Back only as the panel finishes shrinking into it, not over the panel's title while it is still closing.
+        .animation(model.open ? nil : .easeOut(duration: 0.12).delay(0.22), value: model.open)
         .transaction(value: model.open) { $0.animation = nil }
         .animation(.spring(response: 0.42, dampingFraction: 0.92), value: model.spotlight?.rank)
         .animation(.spring(response: 0.42, dampingFraction: 0.92), value: model.spotlight?.id)
@@ -1990,6 +2010,9 @@ struct RootView: View {
         // The notch's own height, not the menu bar's: the menu bar can be a point taller, and that point showed as a sliver
         // of black under the notch at the end of closing, just before the panel left the screen, like a bounce.
         let closedH: CGFloat = model.notchWidth > 0 ? (model.notchHeight > 0 ? model.notchHeight : model.barHeight) : 0
+        // How far the tab with the orb reaches left of the notch, plus the shape's top flare (the same 6 points as the
+        // tab's), so the closed shape's left edge is the tab's. Nothing when the tab isn't showing or there's no notch.
+        let reach: CGFloat = model.notchWidth > 0 && model.tabWidth > 0 ? max(0, model.tabWidth - model.beaconNotch) : 0
         VStack(spacing: 0) {
             pill.frame(height: model.barHeight)
             list.padding(.horizontal, 8)   // clear of the shape's sides, which sit a little in from the top corners
@@ -1997,7 +2020,7 @@ struct RootView: View {
         .frame(width: Self.openWidth, height: Self.openHeight, alignment: .top)
         .overlay(alignment: .bottom) { closedToast }
         .opacity(model.open ? 1 : 0)
-        .modifier(Grow(progress: model.open ? 1 : 0, closed: CGSize(width: closedW, height: closedH), open: CGSize(width: Self.openWidth, height: Self.openHeight)))
+        .modifier(Grow(progress: model.open ? 1 : 0, closed: CGSize(width: closedW + reach, height: closedH), open: CGSize(width: Self.openWidth, height: Self.openHeight)))
         // Dark glass: the Mac's blur of whatever is behind, darkened, and solid black at the very top so it joins the
         // notch. This is the long-standing blur, not macOS 26's Liquid Glass: that one draws itself in over half a
         // second every time its size changes, pale and without its edge, which a panel that grows cannot hide. This
@@ -2019,6 +2042,8 @@ struct RootView: View {
         // The notch's own outline, grown: the top corners curve outward into the top edge of the screen, the way the
         // notch itself meets it, and the bottom corners are rounded. No drawn edge; the shape is the edge.
         .clipShape(NotchShape(top: model.open ? 10 : 6, bottom: model.open ? 18 : 9))
+        // Closed, the shape is the notch and the tab beside it as one piece, so it sits left of centre by half the tab.
+        .modifier(Shift(progress: model.open ? 1 : 0, closed: -reach / 2))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
@@ -2498,6 +2523,17 @@ struct Grow: ViewModifier, Animatable {
     }
 }
 
+/// Moves the panel sideways in step with Grow: by `closed` when closed, not at all when open.
+struct Shift: ViewModifier, Animatable {
+    var progress: CGFloat
+    let closed: CGFloat
+    var animatableData: CGFloat { get { progress } set { progress = newValue } }
+    func body(content: Content) -> some View {
+        let q = max(0, min(1, (progress - 0.035) / 0.95))
+        content.offset(x: closed * (1 - q))
+    }
+}
+
 /// The shape of a panel hanging from the top of the screen. It is full width only along the very top; just below, each
 /// side curves inward (the same outward flare the notch has where it meets the screen's edge), then runs straight down
 /// to a rounded bottom corner.
@@ -2737,13 +2773,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)   // just above the menu bar, the usual level for a notch app
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.hidesOnDeactivate = false
-        panel.contentView = FirstClickHost(rootView: RootView(model: model, app: self).environmentObject(PointerTracker.panel))
-        setUpBeacon()
+        // One window for the notch, always on screen, the usual way for a notch app: the tab with
+        // the orb is drawn in it, over the panel, and the panel grows out of the notch and the tab together and shrinks
+        // back into them. While it is closed the window lets every click through to the menu bar (the clicks on the tab
+        // are caught by the click listener below).
+        panel.contentView = FirstClickHost(rootView: ZStack(alignment: .top) {
+            RootView(model: model, app: self).environmentObject(PointerTracker.panel)
+            NotchTab(model: model)   // on top: closed, the panel's black is the tab's background (hidden while open)
+        })
+        panel.ignoresMouseEvents = true
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self, !self.model.open else { return }
+            self.screen = AppDelegate.notchScreen(); self.place()
+        }
         setUpMenu()
         setUpStatusItem()
         if Setup.wanted || CommandLine.arguments.contains("--setup") { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.showSetup() } }
         if !Demo.on, ProcessInfo.processInfo.environment["CODEHATCH_HOME"] == nil { updater.startUpdater() }
-        place()   // nothing is shown until the hotkey is pressed
+        screen = AppDelegate.notchScreen()
+        place()
+        panel.orderFrontRegardless()   // closed, it is just the notch (and the tab beside it when something is going on)
         registerHotKey()
         // For checking by screenshot: show the panel for a few seconds without taking the keyboard.
         // For checking by screenshot: open without taking the keyboard and stay open until the app is stopped.
@@ -2764,7 +2813,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let self, let p = self.menuPanel, p.isVisible, e.window !== p, e.window !== self.statusItem?.button?.window { self.closeMenuPanel() }
             return e
         }
-        NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+        NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] e in
+            if let self, !self.model.open, e.type == .leftMouseDown, self.tabRect().contains(NSEvent.mouseLocation) { self.beaconClicked(); return }
             if self?.model.open == true { self?.close() }
             if self?.menuPanel?.isVisible == true { self?.closeMenuPanel() }   // a click in another app
         }
@@ -3028,22 +3078,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     @objc func menuToggleWindow() { toggleWidget() }
     @objc func menuCheckUpdates() { updater.checkForUpdates(nil) }
-    var beacon: NSPanel!
     /// Sparkle. It looks at the feed on codehatch.ai about once a day, and when there is a newer version, checks its
     /// signature against the key in Info.plist, offers it, and installs it. Not started in the tests or the demo.
     lazy var updater = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: nil, userDriverDelegate: nil)
-    func setUpBeacon() {
-        beacon = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        beacon.isOpaque = false; beacon.backgroundColor = .clear; beacon.hasShadow = false
-        // One level below the panel, so the open panel always covers it. At the same level, macOS could put either in
-        // front while redrawing, for example while swiping between desktops, and the orb showed through the panel.
-        beacon.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 2)
-        beacon.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-        // Only the black tab takes clicks; the clear space around it lets them through to the menu bar.
-        beacon.contentView = FirstClickHost(rootView: Beacon(model: model) { [weak self] in self?.beaconClicked() })
-        placeBeacon()
-        beacon.orderFrontRegardless()
-        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in self?.placeBeacon() }
+    /// The display with the notch, or the main one.
+    static func notchScreen() -> NSScreen {
+        NSScreen.screens.first { $0.auxiliaryTopLeftArea != nil } ?? NSScreen.main ?? NSScreen.screens[0]
+    }
+    /// Where the tab with the orb is on screen, left of the notch: the part that takes a click while the notch is closed.
+    func tabRect() -> CGRect {
+        guard model.tabWidth > 0, panel.isVisible else { return .zero }
+        let right = panel.frame.midX - model.beaconNotch / 2
+        let h = model.notchHeight > 0 ? model.notchHeight : model.barHeight
+        let left = panel.frame.midX + model.beaconNotch / 2 - model.tabWidth + TabShape.flare
+        return CGRect(x: left, y: panel.frame.maxY - h, width: max(0, right - left), height: h)
     }
     /// Clicking the tab: a finished session is marked as seen, which clears it (the next most urgent thing, if any,
     /// takes its place). Anything else opens the panel.
@@ -3056,23 +3104,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             open(byHover: false)
         }
     }
-    func placeBeacon() {
-        // Always on the built-in display's notch if there is one, otherwise top centre of the main screen.
-        let s = NSScreen.screens.first { $0.auxiliaryTopLeftArea != nil } ?? NSScreen.main ?? screen
-        let bar = max(24, s.frame.maxY - s.visibleFrame.maxY)
-        var notch: CGFloat = 0
-        if let l = s.auxiliaryTopLeftArea, let r = s.auxiliaryTopRightArea { notch = max(0, s.frame.width - l.width - r.width) }
-        // Exactly the notch's height (33 points here, where the menu bar is 34), the same height the panel closes to.
-        // A point taller showed as a black edge under the notch that appeared when the closed panel left the screen.
-        let height = s.safeAreaInsets.top > 0 ? s.safeAreaInsets.top : bar
-        model.beaconNotch = notch
-        beacon.setFrame(NSRect(x: s.frame.midX - notch / 2 - 200 - TabShape.flare, y: s.frame.maxY - height, width: 200 + TabShape.flare + notch, height: height), display: true)
-    }
     func place() {
         let bar = max(24, screen.frame.maxY - screen.visibleFrame.maxY)
         var notch: CGFloat = 0
         if let l = screen.auxiliaryTopLeftArea, let r = screen.auxiliaryTopRightArea { notch = max(0, screen.frame.width - l.width - r.width) }
-        model.barHeight = bar; model.notchWidth = notch
+        model.barHeight = bar; model.notchWidth = notch; model.beaconNotch = notch
         model.notchHeight = screen.safeAreaInsets.top > 0 ? screen.safeAreaInsets.top : bar
         let size = NSSize(width: RootView.openWidth, height: RootView.openHeight)
         panel.setFrame(NSRect(x: screen.frame.midX - size.width / 2, y: screen.frame.maxY - size.height, width: size.width, height: size.height), display: true)
@@ -3109,26 +3145,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model.selected = model.filtered.firstIndex { $0.id == model.currentId } ?? -1
         place()
         // Always take focus, even when opened by the pointer: a window that isn't focused swallows the first click and won't change the cursor.
-        NSAnimationContext.runAnimationGroup { c in c.duration = 0; self.panel.animator().alphaValue = 1 }   // after a fade-out
+        panel.ignoresMouseEvents = false
         if peeking { panel.orderFrontRegardless() } else { panel.makeKeyAndOrderFront(nil) }
         DispatchQueue.main.async { withAnimation(.spring(response: 0.42, dampingFraction: 0.92)) { self.model.open = true } }
     }
     func close() {
         guard model.open else { return }
-        // Quick, with no long tail: the contents are gone well before the shape, and a slow last stretch left an empty
-        // black box hanging under the notch for a moment after it looked closed.
-        withAnimation(.spring(response: 0.32, dampingFraction: 1.0)) { model.open = false }
-        // The tab with the orb is its own window, so the shrinking shape cannot land on it as one piece; its last
-        // stretch hung under the notch as a separate black box after the list had gone. So the panel fades out over
-        // that last stretch instead: over the notch it is black on black, and below it there is nothing left to see.
-        // The spring is three quarters of the way in at 0.15s and nine tenths at 0.2s, so the fade covers only that tail.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            guard !self.model.open else { return }
-            NSAnimationContext.runAnimationGroup { c in c.duration = 0.1; c.timingFunction = CAMediaTimingFunction(name: .easeIn); self.panel.animator().alphaValue = 0 }
+        withAnimation(.spring(response: 0.45, dampingFraction: 1.0)) { model.open = false }   // the usual notch close
+        // The window stays on screen, as the notch, but lets clicks through again and gives the keyboard back to the app
+        // you were in (asking that app to take it back does not work; this does).
+        panel.ignoresMouseEvents = true
+        if panel.isKeyWindow { NSApp.deactivate() }
+        // Opened on another display, it goes back to the notch once it has finished closing.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            guard !self.model.open, self.screen != AppDelegate.notchScreen() else { return }
+            self.screen = AppDelegate.notchScreen(); self.place()
         }
-        // The window leaves the screen only once the shape has finished shrinking into the notch. The closing spring
-        // takes about 0.7s to settle; taken away sooner, the last sliver of the panel was cut off mid-move.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { if !self.model.open { self.panel.orderOut(nil) } }
     }
     /// Pushing the pointer into the top centre of the screen opens the panel; moving away from it closes it again.
     var peeking = false
