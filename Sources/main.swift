@@ -1143,8 +1143,15 @@ struct SetupView: View {
     @State private var working = false
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            // The app's own icon on top, as a Mac's welcome and permission windows have: it says whose window this is.
-            Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 60, height: 60).padding(.leading, -5).padding(.bottom, -4)
+            // The mark on a plain black square, drawn here rather than taken from the app icon: macOS 26 gives app icons
+            // a glassy light rim, which looked like a white border at this size.
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.black)
+                if let url = Bundle.main.url(forResource: "portal", withExtension: "png"), let mark = NSImage(contentsOf: url) {
+                    Image(nsImage: mark).resizable().interpolation(.high).frame(width: 28, height: 28)
+                }
+            }
+            .frame(width: 52, height: 52)
             Text("Set up codehatch").font(.system(size: 20, weight: .semibold))
             Text("codehatch works best with two small additions. Both are plain files you can read, both can be removed in settings, and neither sends anything anywhere.")
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -2815,6 +2822,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return main
     }
     @objc func openSettingsFromMenu() { showSettings() }
+
+    /// Opening codehatch again while it is already running (from Applications, Spotlight or Launchpad) shows the
+    /// panel, so there is always a visible answer to "is it running?". It has no Dock icon to click instead.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        DispatchQueue.main.async { self.open(byHover: false) }
+        return false
+    }
 
     /// macOS would not let codehatch control Terminal or iTerm2. Say so once per app per launch, with the way to fix it.
     var toldDenied = Set<String>()
