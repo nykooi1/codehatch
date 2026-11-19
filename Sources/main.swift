@@ -2434,10 +2434,35 @@ struct Hovering<Content: View>: View {
     @ViewBuilder let content: (Bool) -> Content
     @State private var inside = false
     var body: some View {
-        content(inside).onHover { now in
+        content(inside).background(HoverTracker { now in
+            guard now != inside else { return }
             inside = now
             if now { NSCursor.pointingHand.set() } else { NSCursor.arrow.set(); onLeave() }
+        })
+    }
+}
+
+/// Tells its owner when the pointer enters or leaves, always. SwiftUI's own hover only works while codehatch is the app
+/// in front, and the window spends most of its life beside another app, so the highlight often waited for a nudge of
+/// the mouse. This listens whatever app is in front, and also treats any movement inside as being inside, so a missed
+/// "entered" is caught on the next movement.
+struct HoverTracker: NSViewRepresentable {
+    let changed: (Bool) -> Void
+    func makeNSView(context: Context) -> TrackingView { let v = TrackingView(); v.changed = changed; return v }
+    func updateNSView(_ v: TrackingView, context: Context) { v.changed = changed }
+    final class TrackingView: NSView {
+        var changed: (Bool) -> Void = { _ in }
+        private var area: NSTrackingArea?
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            if let area { removeTrackingArea(area) }
+            let a = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self, userInfo: nil)
+            addTrackingArea(a); area = a
         }
+        override func mouseEntered(with event: NSEvent) { changed(true) }
+        override func mouseMoved(with event: NSEvent) { changed(true) }
+        override func mouseExited(with event: NSEvent) { changed(false) }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }   // clicks go to the row, as before
     }
 }
 
