@@ -8,7 +8,7 @@
 set -e
 cd "$(dirname "$0")/.."
 VERSION="$1"; [ -n "$VERSION" ] || { echo "usage: scripts/make-dmg.sh <version>"; exit 1; }
-OUT=.build/dist; APP="$OUT/codehatch.app"; DMG="$OUT/codehatch-$VERSION.dmg"
+OUT=.build/dist; APP="$OUT/codehatch.app"; DMG="$OUT/codehatch.dmg"   # one name for every version, so the website can link to the newest
 [ -d "$APP" ] || { echo "no $APP; run scripts/release.sh $VERSION first"; exit 1; }
 STAGE=$(mktemp -d)
 ditto "$APP" "$STAGE/codehatch.app"
