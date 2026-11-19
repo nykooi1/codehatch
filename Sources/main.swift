@@ -1803,8 +1803,10 @@ struct RootView: View {
             if inside { hovered = s.id; NSCursor.pointingHand.set() } else if hovered == s.id { hovered = nil; confirmClose = nil; NSCursor.arrow.set() }
         }
         .modifier(PointerLink())
-        .onTapGesture(count: 2) { app?.go(s) }
+        // The single click acts at once. Listening for a double click the usual way made every single click wait
+        // to see whether a second was coming, which felt like lag; here both are heard, independently.
         .onTapGesture { pick(s) }
+        .simultaneousGesture(TapGesture(count: 2).onEnded { app?.go(s) })
         .contextMenu { rowMenu(s) }
     }
 
@@ -1844,8 +1846,10 @@ struct RootView: View {
             if inside { hovered = s.id; NSCursor.pointingHand.set() } else if hovered == s.id { hovered = nil; confirmClose = nil; NSCursor.arrow.set() }
         }
         .modifier(PointerLink())
-        .onTapGesture(count: 2) { app?.go(s) }
+        // The single click acts at once. Listening for a double click the usual way made every single click wait
+        // to see whether a second was coming, which felt like lag; here both are heard, independently.
         .onTapGesture { pick(s) }
+        .simultaneousGesture(TapGesture(count: 2).onEnded { app?.go(s) })
         .contextMenu { rowMenu(s) }
     }
 
@@ -1945,7 +1949,7 @@ struct RootView: View {
 
     /// Everything about one session: the one you last pointed at, or failing that the one that most wants you.
     @ViewBuilder var detailPane: some View {
-        if let s = model.sessions.first(where: { $0.id == detailId }) ?? model.spotlight ?? model.sessions.first(where: { !$0.empty }) {
+        if let s = (model.sessions + model.recent).first(where: { $0.id == detailId }) ?? model.spotlight ?? model.sessions.first(where: { !$0.empty }) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 8) {
