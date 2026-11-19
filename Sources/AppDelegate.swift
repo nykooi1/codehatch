@@ -121,7 +121,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         // A click in one of codehatch's own windows, outside the menu bar panel, closes it too.
         NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] e in
-            if let self, let p = self.menuPanel, p.isVisible, e.window !== p, e.window !== self.statusItem?.button?.window { self.closeMenuPanel() }
+            guard let self else { return e }
+            if let p = self.menuPanel, p.isVisible, e.window !== p, e.window !== self.statusItem?.button?.window { self.closeMenuPanel() }
+            // A right-click (or a control-click) on a session opens codehatch's own menu for it.
+            if e.type == .rightMouseDown || (e.type == .leftMouseDown && e.modifierFlags.contains(.control)),
+               let s = self.sessionUnderPointer(in: e.window) { self.showSessionMenu(s); return nil }
             return e
         }
         NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] e in
@@ -369,23 +373,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func toggleMenuPanel() {
         if let p = menuPanel, p.isVisible { closeMenuPanel(); return }
         guard let button = statusItem?.button, let bw = button.window else { return }
-        let size = NSSize(width: 240, height: 182)
+        let entries = [MenuEntry(id: "sessions", title: "Show sessions"), MenuEntry(id: "window", title: "Open the window"), .line,
+                       MenuEntry(id: "settings", title: "Settings…", key: "⌘,"), MenuEntry(id: "updates", title: "Check for updates…"), .line,
+                       MenuEntry(id: "quit", title: "Quit codehatch", key: "⌘Q")]
+        showMenu(entries, width: 240, key: true, place: { size, screen in
+            NSPoint(x: min(max(bw.frame.minX - 6, screen.visibleFrame.minX + 6), screen.visibleFrame.maxX - size.width - 6), y: bw.frame.minY - size.height - 1)
+        }, chose: { [weak self] id in self?.menuChose(id) })
+        button.highlight(true)
+    }
+    /// Show a menu codehatch draws itself. `place` gives its bottom-left corner on screen, for its size.
+    func showMenu(_ entries: [MenuEntry], width: CGFloat, key: Bool, place: (NSSize, NSScreen) -> NSPoint, chose: @escaping (String) -> Void) {
         let p = menuPanel ?? {
-            let p = KeyPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            let p = KeyPanel(contentRect: NSRect(x: 0, y: 0, width: width, height: 100), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             p.isOpaque = false; p.backgroundColor = NSColor(white: 0, alpha: 0.001); p.hasShadow = true
             p.level = .popUpMenu
             p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
             p.acceptsMouseMovedEvents = true   // so pointer movements over it reach codehatch, for the hover
-            p.contentView = FirstClickHost(rootView: AnyView(MenuPanel(app: self).environmentObject(PointerTracker.menu)))
             menuPanel = p
             return p
         }()
-        let screen = bw.screen ?? NSScreen.main ?? self.screen
-        var x = bw.frame.minX - 6
-        x = min(max(x, screen.visibleFrame.minX + 6), screen.visibleFrame.maxX - size.width - 6)
-        p.setFrame(NSRect(x: x, y: bw.frame.minY - size.height - 1, width: size.width, height: size.height), display: true)
-        p.makeKeyAndOrderFront(nil)
-        button.highlight(true)
+        let host = FirstClickHost(rootView: AnyView(MenuPanel(entries: entries, width: width, chose: chose).environmentObject(PointerTracker.menu)))
+        p.contentView = host
+        let size = NSSize(width: width, height: ceil(host.fittingSize.height))
+        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main ?? self.screen
+        p.setFrame(NSRect(origin: place(size, screen), size: size), display: true)
+        PointerTracker.menu.pointer(at: nil)
+        if key { p.makeKeyAndOrderFront(nil) } else { p.orderFrontRegardless() }
+    }
+    /// The session under the pointer in one of codehatch's windows, if there is one.
+    func sessionUnderPointer(in w: NSWindow?) -> Session? {
+        followPointer()
+        let tracker = w === panel ? PointerTracker.panel : w === widget ? PointerTracker.window : nil
+        guard let id = tracker?.over else { return nil }
+        return (model.sessions + model.recent).first { $0.id == id }
+    }
+    /// What a right-click on a session offers, opened at the pointer.
+    func showSessionMenu(_ s: Session) {
+        var entries = [MenuEntry(id: "rename", title: "Rename…")]
+        if s.status == "closed" { entries.append(MenuEntry(id: "copy", title: "Copy Resume Command")) }
+        entries.append(MenuEntry(id: "finder", title: "Show folder in Finder"))
+        if s.status != "closed" { entries += [.line, MenuEntry(id: "close", title: "Close Session…")] }
+        let m = NSEvent.mouseLocation
+        showMenu(entries, width: 210, key: false, place: { size, screen in
+            // Below and to the right of the pointer, as a menu opens, kept on the screen.
+            NSPoint(x: min(m.x, screen.frame.maxX - size.width - 6), y: max(m.y - size.height, screen.frame.minY + 6))
+        }, chose: { [weak self] id in
+            guard let self else { return }
+            self.closeMenuPanel()
+            switch id {
+            case "rename": self.rename(s)
+            case "copy": NSPasteboard.general.clearContents(); NSPasteboard.general.setString(s.resumeCommand, forType: .string)
+            case "finder": NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: s.cwd)
+            case "close": self.askToEnd(s)
+            default: break
+            }
+        })
     }
     func closeMenuPanel() {
         menuPanel?.orderOut(nil)
@@ -479,6 +521,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     func close() {
         guard model.open else { return }
+        if menuPanel?.isVisible == true { closeMenuPanel() }
         withAnimation(.spring(response: 0.45, dampingFraction: 1.0)) { model.open = false }   // the usual notch close
         // The window stays on screen, as the notch, but lets clicks through again and gives the keyboard back to the app
         // you were in (asking that app to take it back does not work; this does).
@@ -502,7 +545,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.hoverTimer = nil
                 if !self.model.open, self.pointerInNotch() { self.open(byHover: true) }
             }
-        } else if byHover, !peeking, !panel.frame.insetBy(dx: -24, dy: -24).contains(NSEvent.mouseLocation) {
+        } else if byHover, !peeking, !panel.frame.insetBy(dx: -24, dy: -24).contains(NSEvent.mouseLocation),
+                  !(menuPanel?.isVisible == true && menuPanel!.frame.insetBy(dx: -24, dy: -24).contains(NSEvent.mouseLocation)) {
             close()
         }
     }

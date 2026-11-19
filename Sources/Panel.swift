@@ -311,7 +311,6 @@ struct RootView: View {
         // to see whether a second was coming, which felt like lag; here both are heard, independently.
         .onTapGesture { pick(s) }
         .simultaneousGesture(TapGesture(count: 2).onEnded { app?.go(s) })
-        .contextMenu { rowMenu(s) }
         }
     }
 
@@ -352,7 +351,6 @@ struct RootView: View {
         // to see whether a second was coming, which felt like lag; here both are heard, independently.
         .onTapGesture { pick(s) }
         .simultaneousGesture(TapGesture(count: 2).onEnded { app?.go(s) })
-        .contextMenu { rowMenu(s) }
         }
     }
 
@@ -361,12 +359,6 @@ struct RootView: View {
     func pick(_ s: Session) { if paneShown { detailId = s.id } else { app?.go(s) } }
     func picked(_ s: Session) -> Bool { paneShown && detailId == s.id }
 
-    @ViewBuilder func rowMenu(_ s: Session) -> some View {
-        Button("Rename…") { app?.rename(s) }
-        if s.status == "closed" { Button("Copy Resume Command") { copyResume(s) } }
-        Button("Show folder in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: s.cwd) }
-        if s.status != "closed" { Divider(); Button("Close Session…") { app?.askToEnd(s) } }
-    }
     func copyResume(_ s: Session) {
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(s.resumeCommand, forType: .string)
     }
@@ -703,48 +695,49 @@ struct RootView: View {
         .contentShape(Rectangle())
         
         .onTapGesture { dbg("row clicked: \(s.title)"); app?.go(s) }
-        .contextMenu {
-            Button("Rename…") { app?.rename(s) }
-            if s.status == "closed" { Button("Copy Resume Command") { copyResume(s) } }
-            Button("Show folder in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: s.cwd) }
-            if s.status != "closed" { Divider(); Button("Close Session…") { app?.askToEnd(s) } }
-        }
         }
     }
 }
 
-/// The panel under the menu bar icon: the same five choices a menu would have, drawn by codehatch.
+/// One line in a menu codehatch draws itself: a choice, or a divider.
+struct MenuEntry {
+    var id = "", title = "", key = ""
+    var divider = false
+    static let line = MenuEntry(divider: true)
+}
+
+/// A menu drawn by codehatch: the panel under the menu bar icon, and the one a right-click on a session opens. macOS 26
+/// draws a classic menu late (a known Apple bug), and these show at once.
 struct MenuPanel: View {
-    weak var app: AppDelegate?
+    var entries: [MenuEntry]
+    var width: CGFloat = 240
+    var chose: (String) -> Void
     @Environment(\.colorScheme) private var scheme
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            item("sessions", "Show sessions")
-            item("window", "Open the window")
-            Divider().padding(.horizontal, 12).padding(.vertical, 5)
-            item("settings", "Settings…", key: "⌘,")
-            item("updates", "Check for updates…")
-            Divider().padding(.horizontal, 12).padding(.vertical, 5)
-            item("quit", "Quit codehatch", key: "⌘Q")
+            ForEach(Array(entries.enumerated()), id: \.offset) { _, e in
+                if e.divider { Divider().padding(.horizontal, 12).padding(.vertical, 5) } else { item(e) }
+            }
         }
         .padding(6)
-        .frame(width: 240, height: 182, alignment: .top)
+        .frame(width: width, alignment: .top)
+        .fixedSize(horizontal: false, vertical: true)
         // Darker than a plain blur, to match the system's own menu bar panels (Wi-Fi, Battery) beside it.
         .background(ZStack { PanelBlur(light: scheme == .light); (scheme == .light ? Color.white.opacity(0.35) : Color.black.opacity(0.38)) })
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
     }
-    func item(_ id: String, _ title: String, key: String = "") -> some View {
-        Hovering(id: id) { over in
+    func item(_ e: MenuEntry) -> some View {
+        Hovering(id: "menu-" + e.id) { over in
             HStack {
-                Text(title).font(.system(size: 13))
+                Text(e.title).font(.system(size: 13))
                 Spacer()
-                if !key.isEmpty { Text(key).font(.system(size: 12)).foregroundStyle(.secondary) }
+                if !e.key.isEmpty { Text(e.key).font(.system(size: 12)).foregroundStyle(.secondary) }
             }
             .padding(.horizontal, 10).frame(height: 28)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.primary.opacity(over ? 0.1 : 0)))
             .contentShape(Rectangle())
-            .onTapGesture { app?.menuChose(id) }
+            .onTapGesture { chose(e.id) }
         }
     }
 }

@@ -52,6 +52,7 @@ enum Render {
         case "panel-desktop": model.notchWidth = 0; model.barHeight = 24; size = CGSize(width: RootView.openWidth, height: RootView.openHeight); view = AnyView(RootView(model: model, app: nil).environmentObject(PointerTracker.panel))
         case "settings": size = CGSize(width: 520, height: 560); view = AnyView(SettingsView(app: nil))
         case "setup": size = CGSize(width: 470, height: 480); view = AnyView(SetupView(done: {}))
+        case "setup-done": size = CGSize(width: 470, height: 560); view = AnyView(SetupView(done: {}, results: [("Live updates", nil), ("Helper for Cursor", nil), ("Helper for VS Code", nil), ("Open at login", nil)]))
         default: size = CGSize(width: 1180, height: 640); view = AnyView(RootView(model: model, app: nil, detached: true).environmentObject(PointerTracker.window))
         }
         let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height).environment(\.colorScheme, light ? .light : .dark))

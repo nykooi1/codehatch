@@ -61,6 +61,9 @@ struct SetupView: View {
     @State private var atLogin = true
     @State private var editors: Set<String> = Set(Helper.present.map(\.id))
     @State private var results: [(what: String, problem: String?)]? = nil
+    init(done: @escaping () -> Void, results: [(what: String, problem: String?)]? = nil) {
+        self.done = done; _results = State(initialValue: results)   // results given only to draw the finished screen in tests
+    }
     @State private var working = false
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -87,10 +90,28 @@ struct SetupView: View {
                             }
                         }
                     }
-                    if Hooks.hasCodex && hooks { Text("Codex will not run the hooks until you type /hooks in a Codex session and trust them.").font(.callout).foregroundStyle(.secondary).padding(.top, 2) }
-                    if !editors.isEmpty { Text("The first time you jump to a session, your editor asks once whether the helper may open the link. Say yes.").font(.callout).foregroundStyle(.secondary) }
                 }
                 .padding(.vertical, 4)
+                // What is left to do, where it cannot be missed: a box of its own, in full-size text that wraps, not a
+                // grey footnote. Without the Codex step, Codex sessions never update live, and nothing else says why.
+                let codexStep = Hooks.hasCodex && hooks, editorStep = !editors.isEmpty
+                if codexStep || editorStep {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(codexStep && editorStep ? "Two more things" : "One more thing").font(.system(size: 13, weight: .semibold))
+                        if codexStep {
+                            nextStep("In Codex, type /hooks once and approve them",
+                                     "Codex asks before it runs new hooks. Until you approve codehatch's, Codex sessions won't update live. Sessions that were already open need a restart.")
+                        }
+                        if editorStep {
+                            nextStep("Allow the link in your editor",
+                                     "The first time you jump to a session, VS Code or Cursor asks whether codehatch's helper may open a link. Tick Don't ask again, then Open.")
+                        }
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.orange.opacity(0.12)))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.orange.opacity(0.45), lineWidth: 1))
+                }
                 HStack { Spacer(); Button("Done") { done() }.keyboardShortcut(.defaultAction) }
             } else {
                 VStack(alignment: .leading, spacing: 12) {
@@ -137,6 +158,16 @@ struct SetupView: View {
             }
         }
         .padding(22).frame(width: 470)
+    }
+    /// One thing left to do after setup: what to do, in bold, then why, both wrapping onto as many lines as they need.
+    func nextStep(_ title: String, _ why: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "arrow.right.circle.fill").foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.system(size: 13, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
+                Text(why).font(.system(size: 12.5)).foregroundStyle(.primary.opacity(0.8)).fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }
 

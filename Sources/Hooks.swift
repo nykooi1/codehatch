@@ -83,7 +83,7 @@ enum Hooks {
                 s.startedAt = old.startedAt; s.tool = old.tool; s.inPanel = old.inPanel; s.recap = old.recap; s.lastAsked = old.lastAsked; s.lastReply = old.lastReply; s.replyIsNewer = old.replyIsNewer
                 s.branch = old.branch; s.empty = old.empty; s.waitingFor = m.waitingFor
                 sessions[i] = s
-            } else if e.tool == "claude", let sid = e.sessionId, !sid.hasPrefix("pid-"), let cwd = e.cwd, e.pid > 1, kill(e.pid, 0) == 0 {
+            } else if e.tool == "claude", let sid = e.sessionId, !sid.hasPrefix("pid-"), !Loader.background.contains(sid), let cwd = e.cwd, e.pid > 1, kill(e.pid, 0) == 0 {
                 // Known only from hooks: the status file is missing. Build the session from the event.
                 let found = Loader.title(for: sid, cwd: cwd)
                 var s = Session(id: sid, pid: e.pid, cwd: cwd, status: m.status, updatedAt: at, title: found ?? "New session")

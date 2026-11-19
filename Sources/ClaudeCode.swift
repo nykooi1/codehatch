@@ -12,6 +12,10 @@ enum Loader {
     static let home: URL = ProcessInfo.processInfo.environment["CODEHATCH_HOME"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.homeDirectoryForCurrentUser
     static var titleCache: [String: (size: UInt64, title: String?)] = [:]
 
+    /// Sessions Claude Code runs in the background (a fork, for one): no terminal or editor shows them, so there is
+    /// nowhere to take you, and they are left out. Kept so the hooks do not add them back.
+    static var background: Set<String> = []
+
     static func load() -> [Session] {
         let dir = home.appendingPathComponent(".claude/sessions")
         // No Claude Code on this Mac is not a reason to stop: there may still be Codex sessions.
@@ -22,6 +26,7 @@ enum Loader {
                   let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let pid = o["pid"] as? Int, kill(Int32(pid), 0) == 0,
                   let sid = o["sessionId"] as? String else { continue }
+            if (o["kind"] as? String) == "bg" { background.insert(sid); continue }
             let cwd = o["cwd"] as? String ?? ""
             let updated = (o["statusUpdatedAt"] as? Double) ?? (o["updatedAt"] as? Double) ?? 0
             let found = title(for: sid, cwd: cwd)
