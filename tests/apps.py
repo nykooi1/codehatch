@@ -295,6 +295,19 @@ def test_app_editor_windows(sb):
         eq(go(shell_a, a), "folder " + a, "a window with no note: found by the session's own folder")
         wait("A's terminal in front, with no note", lambda: note().get("pid") == shell_a and note().get("folder") == a, timeout=20)
 
+        # A window with no folder open, holding the session's terminal (VS Code opened on its own, claude started in its
+        # terminal in the home folder): there is no folder to open, so codehatch must not open one, which would make a
+        # new window. Stood in for by noting A's window as having no folder, under a live process's name.
+        for name, n in window_notes().items():
+            if n.get("folders") == [a]:
+                os.remove(os.path.join(WINDOWS, name))
+        host = sb.sleeper()
+        import json as _json
+        with open(os.path.join(WINDOWS, "%d.json" % host), "w") as f:
+            _json.dump({"folders": [], "shells": [shell_a], "app": "Visual Studio Code"}, f)
+        eq(go(shell_a, os.path.expanduser("~")), "window with no folder", "a window with no folder: nothing is opened")
+        os.remove(os.path.join(WINDOWS, "%d.json" % host))
+
         time.sleep(3)   # a new window would have noted itself by now
         eq(sorted(set(window_notes()) - before), [], "no new editor window was opened")
     finally:

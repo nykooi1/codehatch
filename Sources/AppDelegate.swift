@@ -808,8 +808,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Not found (a window still running an older helper, which notes nothing, until it is reloaded): open the
         // session's own folder, as before. That brings back the right window whenever the session was started at the
         // top of the window's project, which is the usual case, so this is never worse than before.
-        let folder = win?.folders.first ?? s.cwd
-        run(["-a", app, folder])
+        // Found in a window with no folder open (an editor opened on its own, with a terminal in it): there is no folder
+        // to open, and opening the session's folder would make a new window. Just bring the editor forward.
+        let folder = win == nil ? s.cwd : win!.folders.first
+        if let folder { run(["-a", app, folder]) } else { run(["-a", app]) }
         dbg("go: window \(win == nil ? "not found" : "found") among \(wins.count)")
         // Then ask the helper inside it to show the terminal tab this session is running in, once the editor is in
         // front, so the link reaches that window. Sent once: until "Don't ask again" is ticked, the editor asks
@@ -822,7 +824,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for _ in 0..<15 where NSWorkspace.shared.frontmostApplication?.bundleURL?.path != app { Thread.sleep(forTimeInterval: 0.1) }
         Thread.sleep(forTimeInterval: 0.25)
         run(["-g", link])
-        return win == nil ? "folder \(folder)" : "window \(folder)"
+        return win == nil ? "folder \(s.cwd)" : folder.map { "window \($0)" } ?? "window with no folder"
     }
 
     var hotKeyHandler = false
