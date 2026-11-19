@@ -2683,7 +2683,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             exit(0)
         }
         panel = KeyPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = false
+        // Not .clear: SwiftUI's hover detection fails sporadically in a window whose background is exactly clear, for
+        // any view that does not fill the whole window (Apple bug FB11988707) - which showed as rows that did not
+        // highlight, or only after a nudge of the mouse. A black at 0.1% opacity cannot be seen and avoids it.
+        panel.isOpaque = false; panel.backgroundColor = NSColor(white: 0, alpha: 0.001); panel.hasShadow = false
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)   // just above the menu bar, the usual level for a notch app
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.hidesOnDeactivate = false
@@ -3060,7 +3063,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                          styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         w.titlebarAppearsTransparent = true; w.titleVisibility = .hidden; w.title = "codehatch"
         applyWindowLook(to: w)
-        w.isOpaque = false; w.backgroundColor = .clear
+        w.isOpaque = false; w.backgroundColor = NSColor(white: 0, alpha: 0.001)   // not .clear: see the panel's note on hover
         w.isMovableByWindowBackground = true
         w.isReleasedWhenClosed = false
         w.level = Prefs.bool("widgetOnTop") ? .floating : .normal
