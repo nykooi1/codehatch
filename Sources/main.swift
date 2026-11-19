@@ -833,7 +833,7 @@ struct Beacon: View {
                 .frame(maxHeight: .infinity)
                 .background(TabShape(far: model.beaconNotch > 0 ? 12 : 10).fill(.black))
                 .contentShape(Rectangle())
-                .modifier(PointerLink())
+                
                 .onTapGesture(perform: clicked)
                 .help((s.rank == 1 ? "Click to clear" : "Click to see your sessions") + (more > 0 ? " · \(more) more \(["need you", "finished", "working"][min(s.rank, 2)])" : ""))
                 // It grows out of the notch sideways and goes back into it, instead of fading in and out. The part
@@ -1608,7 +1608,7 @@ struct RootView: View {
                                             Text(showUnused.contains(g.id) ? "hide unused" : "\(g.unused.count) opened but never used")
                                                 .font(.system(size: 11)).foregroundStyle(ink.opacity(0.3))
                                                 .padding(.leading, layout == "cards" ? 16 : 44).padding(.vertical, layout == "cards" ? 8 : 6).frame(maxWidth: .infinity, alignment: .leading)
-                                                .contentShape(Rectangle()).modifier(PointerLink())
+                                                .contentShape(Rectangle())
                                                 .onTapGesture { toggle(&showUnused, g.id) }
                                         }
                                     }
@@ -1720,7 +1720,7 @@ struct RootView: View {
         .font(.system(size: 11.5, weight: .medium))
         .padding(.horizontal, 9).padding(.vertical, 4)
         .background(RoundedRectangle(cornerRadius: 6).fill(ink.opacity(on ? 0.12 : 0)))
-        .contentShape(Rectangle()).modifier(PointerLink())
+        .contentShape(Rectangle())
         .onTapGesture(perform: act)
     }
 
@@ -1740,7 +1740,7 @@ struct RootView: View {
         .padding(.horizontal, 16).padding(.vertical, 7)
         // A faint wash of the ink, fainter than a highlighted row, so the two never read as the same thing.
         .background(ink.opacity(0.04))
-        .contentShape(Rectangle()).modifier(PointerLink())
+        .contentShape(Rectangle())
         .onTapGesture { withAnimation(.easeInOut(duration: 0.18)) { toggle(&collapsed, g.id) } }
     }
 
@@ -1813,7 +1813,7 @@ struct RootView: View {
         .background(ink.opacity(s.id == model.currentId ? 0.11 : picked(s) ? 0.09 : hovering ? 0.05 : 0))
         .overlay(alignment: .leading) { if picked(s) { Rectangle().fill(ink.opacity(0.5)).frame(width: 2) } }
         .contentShape(Rectangle())
-        .modifier(PointerLink())
+        
         // The single click acts at once. Listening for a double click the usual way made every single click wait
         // to see whether a second was coming, which felt like lag; here both are heard, independently.
         .onTapGesture { pick(s) }
@@ -1855,7 +1855,7 @@ struct RootView: View {
         .background(RoundedRectangle(cornerRadius: 10).fill(ink.opacity(here ? 0.12 : picked(s) ? 0.1 : hovering ? 0.07 : 0.045)))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(ink.opacity(picked(s) ? 0.55 : here ? 0.22 : 0.08), lineWidth: picked(s) ? 1 : 0.5))
         .contentShape(RoundedRectangle(cornerRadius: 10))
-        .modifier(PointerLink())
+        
         // The single click acts at once. Listening for a double click the usual way made every single click wait
         // to see whether a second was coming, which felt like lag; here both are heard, independently.
         .onTapGesture { pick(s) }
@@ -1883,13 +1883,13 @@ struct RootView: View {
     var lookSwitch: some View {
         Image(systemName: lightLook ? "moon" : "sun.max").font(.system(size: 13)).foregroundStyle(ink.opacity(0.45))
             .frame(width: 16)
-            .contentShape(Rectangle().inset(by: -6)).modifier(PointerLink())
+            .contentShape(Rectangle().inset(by: -6))
             .onTapGesture { UserDefaults.standard.set(lightLook ? "dark" : "light", forKey: "windowLook"); app?.applyWindowLook() }
             .help(lightLook ? "Switch to dark" : "Switch to light")
     }
     var gear: some View {
         Image(systemName: "gearshape").font(.system(size: 13)).foregroundStyle(ink.opacity(0.45))
-            .contentShape(Rectangle().inset(by: -6)).modifier(PointerLink())
+            .contentShape(Rectangle().inset(by: -6))
             .onTapGesture { app?.showSettings() }.help("Settings")
             .contextMenu {
                 Button("Settings…") { app?.showSettings() }
@@ -1908,7 +1908,7 @@ struct RootView: View {
                 Spacer(minLength: 4)
                 Image(systemName: copied == s.id ? "checkmark" : "doc.on.doc").font(.system(size: 11, weight: .medium))
                     .foregroundStyle(ink.opacity(copied == s.id ? 0.95 : 0.6)).frame(width: 16)
-                    .contentShape(Rectangle().inset(by: -6)).modifier(PointerLink()).help("Copy")
+                    .contentShape(Rectangle().inset(by: -6)).help("Copy")
                     .onTapGesture {
                         copyResume(s); copied = s.id
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { if copied == s.id { copied = nil } }
@@ -1931,13 +1931,13 @@ struct RootView: View {
         if confirmClose == s.id {
             Text("Close?").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Color(red: 1, green: 0.5, blue: 0.47))
                 .padding(.horizontal, 7).padding(.vertical, 2.5).background(Capsule().fill(Color(red: 1, green: 0.35, blue: 0.3).opacity(0.18)))
-                .contentShape(Rectangle()).modifier(PointerLink())
+                .contentShape(Rectangle())
                 .onTapGesture { confirmClose = nil; app?.end(s) }
         } else if (hovering || Self.showX) && s.status != "closed" {
             // A bare x, as on a Mac tab: it only gets a backing when the pointer is on the x itself.
             Image(systemName: "xmark").font(.system(size: 9.5, weight: .medium)).foregroundStyle(ink.opacity(overX == s.id ? 0.95 : 0.5))
                 .frame(width: 18, height: 18).background(RoundedRectangle(cornerRadius: 5).fill(ink.opacity(overX == s.id ? 0.14 : 0)))
-                .contentShape(Rectangle()).modifier(PointerLink()).help("Close this session")
+                .contentShape(Rectangle()).help("Close this session")
                 .onHover { overX = $0 ? s.id : (overX == s.id ? nil : overX) }
                 .onTapGesture { if confirmBusy && (s.rank == 0 || s.rank == 2) { confirmClose = s.id } else { app?.end(s) } }
         }
@@ -1948,7 +1948,7 @@ struct RootView: View {
             HStack(spacing: 10) {
                 Text("Closed \"\(c.title)\"").foregroundStyle(Color.white.opacity(0.85)).lineLimit(1)
                 // Undo, in effect: put the session back where it was, in a new terminal.
-                Text("Resume").foregroundStyle(.white).fontWeight(.semibold).fixedSize().contentShape(Rectangle()).modifier(PointerLink())
+                Text("Resume").foregroundStyle(.white).fontWeight(.semibold).fixedSize().contentShape(Rectangle())
                     .onTapGesture { model.closed = nil; if let s = c.session { app?.go(s) } }
             }
             .font(.system(size: 11.5, weight: .medium)).padding(.horizontal, 13).padding(.vertical, 8)
@@ -2000,7 +2000,7 @@ struct RootView: View {
         Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(primary ? paper : ink.opacity(0.85))
             .padding(.horizontal, 11).padding(.vertical, 6)
             .background(RoundedRectangle(cornerRadius: 7).fill(primary ? ink.opacity(0.92) : ink.opacity(0.1)))
-            .contentShape(Rectangle()).modifier(PointerLink())
+            .contentShape(Rectangle())
             .onTapGesture(perform: act)
     }
 
@@ -2055,7 +2055,7 @@ struct RootView: View {
                 Text(s.title).foregroundStyle(ink.opacity(0.88)).lineLimit(1).truncationMode(.tail)
                 .font(.system(size: 11.5, weight: .medium))
                 .contentShape(Rectangle())
-                .modifier(PointerLink())
+                
                 .onTapGesture { app?.go(s) }
             }
         }
@@ -2094,7 +2094,7 @@ struct RootView: View {
                     .focused($searchFocused)
                 if !detached {
                     Image(systemName: "macwindow.on.rectangle").font(.system(size: 13)).foregroundStyle(ink.opacity(0.45))
-                        .contentShape(Rectangle().inset(by: -6)).modifier(PointerLink())   // a hand, like every other button here
+                        .contentShape(Rectangle().inset(by: -6))   // a hand, like every other button here
                         .onTapGesture { app?.toggleWidget() }
                         .help("Keep a copy on screen that you can move to another display")
                 }
@@ -2174,7 +2174,7 @@ struct RootView: View {
             Spacer()
         }
         .padding(.horizontal, 8).padding(.vertical, 6)
-        .contentShape(Rectangle()).modifier(PointerLink())
+        .contentShape(Rectangle())
         .onTapGesture { withAnimation(.easeInOut(duration: 0.18)) { if model.query.isEmpty { toggle(&openClosed, name) } else { toggle(&shutInSearch, name) } } }
     }
     func repoHeader(_ name: String, count: Int) -> some View {
@@ -2188,7 +2188,7 @@ struct RootView: View {
     }
 
     func row(_ s: Session, selected: Bool, showRepo: Bool = false) -> some View {
-        Hovering(onLeave: { if confirmClose == s.id { confirmClose = nil } }) { hovering in
+        Hovering(label: s.title, onLeave: { if confirmClose == s.id { confirmClose = nil } }) { hovering in
         HStack(alignment: .top, spacing: 8) {
             Group {
                 if s.rank == 2 { Orb(tint: PortalMark.working, light: lightLook) }
@@ -2224,7 +2224,7 @@ struct RootView: View {
         .padding(.leading, 8).padding(.trailing, 12).padding(.vertical, 7)
         .background(RoundedRectangle(cornerRadius: 8).fill(ink.opacity(selected ? 0.11 : hovering ? 0.06 : 0)))
         .contentShape(Rectangle())
-        .modifier(PointerLink())
+        
         .onTapGesture { dbg("row clicked: \(s.title)"); app?.go(s) }
         .contextMenu {
             Button("Rename…") { app?.rename(s) }
@@ -2375,12 +2375,6 @@ final class OrbLayerView: NSView {
     }
 }
 /// A pointing-hand cursor over things you can click.
-struct PointerLink: ViewModifier {
-    func body(content: Content) -> some View {
-        if #available(macOS 15.0, *) { content.pointerStyle(.link) }
-        else { content.onHover { $0 ? NSCursor.pointingHand.push() : NSCursor.pop() } }
-    }
-}
 
 /// The codehatch portal arch. Dim when nothing is happening; glows and shows a count when sessions are active.
 /// The surface behind the panel and the window: Liquid Glass on macOS 26 and later, darkened so white text
@@ -2430,41 +2424,15 @@ struct OutOfNotch: ViewModifier, Animatable {
 /// redraws only the two rows it left and entered; kept in the window, every move redrew the whole list, which made the
 /// hover highlight lag behind the pointer.
 struct Hovering<Content: View>: View {
+    var label = ""
     var onLeave: () -> Void = {}
     @ViewBuilder let content: (Bool) -> Content
     @State private var inside = false
     var body: some View {
-        content(inside).background(HoverTracker { now in
-            guard now != inside else { return }
+        content(inside).onHover { now in
             inside = now
-            if now { NSCursor.pointingHand.set() } else { NSCursor.arrow.set(); onLeave() }
-        })
-    }
-}
-
-/// Tells its owner when the pointer enters or leaves, always. SwiftUI's own hover only works while codehatch is the app
-/// in front, and the window spends most of its life beside another app, so the highlight often waited for a nudge of
-/// the mouse. This listens whatever app is in front, and also treats any movement inside as being inside, so a missed
-/// "entered" is caught on the next movement.
-struct HoverTracker: NSViewRepresentable {
-    let changed: (Bool) -> Void
-    func makeNSView(context: Context) -> TrackingView { let v = TrackingView(); v.changed = changed; return v }
-    func updateNSView(_ v: TrackingView, context: Context) { v.changed = changed }
-    final class TrackingView: NSView {
-        var changed: (Bool) -> Void = { _ in }
-        private var area: NSTrackingArea?
-        override func updateTrackingAreas() {
-            super.updateTrackingAreas()
-            if let area { removeTrackingArea(area) }
-            // The row's whole area, not just the part visible when this was last worked out: the notch panel grows open
-            // from nothing, so rows near its bottom were measured while still hidden and kept an empty area afterwards.
-            let a = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways], owner: self, userInfo: nil)
-            addTrackingArea(a); area = a
+            if !now { onLeave() }
         }
-        override func mouseEntered(with event: NSEvent) { changed(true) }
-        override func mouseMoved(with event: NSEvent) { changed(true) }
-        override func mouseExited(with event: NSEvent) { changed(false) }
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }   // clicks go to the row, as before
     }
 }
 
@@ -2720,6 +2688,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.hidesOnDeactivate = false
         panel.contentView = FirstClickHost(rootView: RootView(model: model, app: self))
+        // codehatch is never the app in front (it has no Dock icon), so macOS treats it as a background app and puts it
+        // to sleep between events ("App Nap"): its timers and pointer events are held back and batched, which shows as
+        // a hover highlight or menu that lags or waits for a nudge of the mouse. It is something you point at directly,
+        // so it is kept awake. It still does nothing while nothing is happening, so this costs no power.
+        awake = ProcessInfo.processInfo.beginActivity(options: [.userInitiatedAllowingIdleSystemSleep], reason: "codehatch responds to the pointer at the notch")
         setUpBeacon()
         setUpMenu()
         setUpStatusItem()
@@ -2917,6 +2890,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// The codehatch mark in the menu bar, the usual home for a utility like this: click it for the panel and the
     /// window, settings, and quitting. It can be hidden in settings.
     var statusItem: NSStatusItem?
+    var awake: NSObjectProtocol?
     func setUpStatusItem() {
         guard Prefs.bool("showMenuIcon") else { statusItem.map { NSStatusBar.system.removeStatusItem($0) }; statusItem = nil; return }
         guard statusItem == nil else { return }
