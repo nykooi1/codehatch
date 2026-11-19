@@ -14,7 +14,7 @@ codehatch only reads these. The one exception is its own hook entries (below), w
 
 ## Noticing changes
 
-- **Hooks.** With live updates on, Claude Code and Codex run `app/hook/codehatch-hook.sh` when a session starts, gets a
+- **Hooks.** With live updates on, Claude Code and Codex run `hooks/codehatch-hook.sh` when a session starts, gets a
   prompt, asks for permission, finishes a turn or ends. The script writes one small file per session to
   `~/.codehatch/live` recording which session, which event and when, and nothing else. It never blocks the tool: it waits
   at most a second for its input and always exits successfully.
@@ -24,7 +24,7 @@ codehatch only reads these. The one exception is its own hook entries (below), w
 
 - **Terminal and iTerm2:** codehatch finds the tab by the terminal device the session runs on, and brings it forward
   through AppleScript. The first time, macOS asks to let codehatch control that app.
-- **Cursor and VS Code:** the helper extension (`app/editor-helper`) receives a link from codehatch and shows the
+- **Cursor and VS Code:** the helper extension (`editor-helper`) receives a link from codehatch and shows the
   terminal tab whose process matches. Without the helper, codehatch brings the right window forward but cannot pick the tab.
 - **Resuming** a closed session opens a new terminal in its folder and runs `claude --resume <id>` or
   `codex resume <id>`. The command is built from a checked session id, never taken from the link.
@@ -32,7 +32,7 @@ codehatch only reads these. The one exception is its own hook entries (below), w
 ## Updates
 
 codehatch uses [Sparkle](https://sparkle-project.org). Once a day it fetches `https://codehatch.ai/appcast.xml`, and an
-update is installed only if it is signed with the project's key. `app/release.sh` builds, signs and packages a release
+update is installed only if it is signed with the project's key. `scripts/release.sh` builds, signs and packages a release
 and writes that feed.
 
 ## Performance

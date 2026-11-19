@@ -23,7 +23,7 @@ import json, os, shutil, signal, sqlite3, subprocess, sys, time, uuid
 HERE = os.path.dirname(os.path.abspath(__file__))
 APPDIR = os.path.dirname(HERE)
 APP = os.path.join(APPDIR, ".build", "codehatch.app", "Contents", "MacOS", "codehatch")
-HOOK = os.path.join(APPDIR, "hook", "codehatch-hook.sh")
+HOOK = os.path.join(APPDIR, "hooks", "codehatch-hook.sh")
 TESTS_ROOT = os.path.join(os.path.expanduser("~"), ".codehatch-tests")
 MARKER = ".codehatch-test-sandbox"
 
@@ -721,7 +721,7 @@ def main():
         tests += apps.TESTS
     tests = [t for t in tests if only in t.__name__]
     if not os.access(APP, os.X_OK):
-        print("The app is not built. Run ./run.sh first."); return 2
+        print("The app is not built. Run scripts/run.sh first."); return 2
     passed, failed = 0, []
     for t in tests:
         sb = Sandbox()  # a fresh, empty sandbox for every test

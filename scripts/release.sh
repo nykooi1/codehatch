@@ -1,7 +1,7 @@
 #!/bin/sh
 # Make a release: build the app, zip it, sign the zip for the updater, and write the feed the app checks.
 #
-#   ./release.sh 0.1.0 "What changed, in a sentence."
+#   scripts/release.sh 0.1.0 "What changed, in a sentence."
 #
 # It leaves two files in .build/dist/: codehatch-<version>.zip (upload to a GitHub release with that tag) and
 # appcast.xml (publish at https://codehatch.ai/appcast.xml). Once both are up, every installed copy offers the
@@ -14,9 +14,9 @@
 # Not done here yet: signing with an Apple Developer ID and notarising. Until then a downloaded copy shows the
 # "unidentified developer" warning on first launch.
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."   # the repository root
 VERSION="$1"; NOTES="${2:-Fixes and improvements.}"
-[ -n "$VERSION" ] || { echo "usage: ./release.sh <version> [notes]"; exit 1; }
+[ -n "$VERSION" ] || { echo "usage: scripts/release.sh <version> [notes]"; exit 1; }
 REPO="${CODEHATCH_REPO:-nykooi1/codehatch}"
 OUT=.build/dist; APP="$OUT/codehatch.app"; ZIP="$OUT/codehatch-$VERSION.zip"
 BUILD=$(git rev-list --count HEAD 2>/dev/null || echo 1)   # a number that only goes up; the updater compares these
@@ -24,7 +24,7 @@ BUILD=$(git rev-list --count HEAD 2>/dev/null || echo 1)   # a number that only 
 swift build -c release >/dev/null
 rm -rf "$OUT" && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 cp "$(swift build -c release --show-bin-path)/codehatch" "$APP/Contents/MacOS/"
-cp Sources/portal.png hook/codehatch-hook.sh icon/AppIcon.icns "$APP/Contents/Resources/"
+cp hooks/codehatch-hook.sh assets/AppIcon.icns "$APP/Contents/Resources/" && cp assets/menu-mark.png "$APP/Contents/Resources/portal.png"
 cp editor-helper/codehatch-helper-*.vsix "$APP/Contents/Resources/"   # the editor helper travels inside the app
 cp Info.plist "$APP/Contents/"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" -c "Set :CFBundleVersion $BUILD" -c "Set :CFBundleName codehatch" "$APP/Contents/Info.plist"

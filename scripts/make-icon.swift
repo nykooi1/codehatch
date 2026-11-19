@@ -1,9 +1,10 @@
-// Draws the app's icon (the white mark on a near-black rounded square) and writes AppIcon.icns beside this file.
+// Draws the app's icon (the white mark on a near-black rounded square) and writes assets/AppIcon.icns and assets/icon.png.
+// Run from anywhere: swift scripts/make-icon.swift
 // Run after the mark changes: swift icon/make-icon.swift
 import AppKit
 
-let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-guard let mark = NSImage(contentsOf: here.deletingLastPathComponent().appendingPathComponent("Sources/portal.png")) else { fatalError("no mark") }
+let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("assets")
+guard let mark = NSImage(contentsOf: here.appendingPathComponent("menu-mark.png")) else { fatalError("no mark") }
 let set = here.appendingPathComponent("AppIcon.iconset")
 try? FileManager.default.removeItem(at: set)
 try! FileManager.default.createDirectory(at: set, withIntermediateDirectories: true)
@@ -29,6 +30,7 @@ for (name, px) in [("16x16", 16), ("16x16@2x", 32), ("32x32", 32), ("32x32@2x", 
 let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
 p.arguments = ["-c", "icns", set.path, "-o", here.appendingPathComponent("AppIcon.icns").path]
 try! p.run(); p.waitUntilExit()
-try? FileManager.default.copyItem(at: set.appendingPathComponent("icon_256x256.png"), to: here.appendingPathComponent("preview.png"))
+try? FileManager.default.removeItem(at: here.appendingPathComponent("icon.png"))
+try? FileManager.default.copyItem(at: set.appendingPathComponent("icon_256x256.png"), to: here.appendingPathComponent("icon.png"))
 try? FileManager.default.removeItem(at: set)
 print(p.terminationStatus == 0 ? "wrote AppIcon.icns" : "iconutil failed")

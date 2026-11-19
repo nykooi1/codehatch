@@ -1,6 +1,6 @@
 #!/bin/sh
 # Build, wrap it as a Mac app, stop the old copy, start the new one.
-cd "$(dirname "$0")" || exit 1
+cd "$(dirname "$0")/.." || exit 1   # the repository root
 mkdir -p .build
 # Built optimised, as a released copy is: an unoptimised build is several times slower at drawing, which shows as lag.
 if ! swift build -c release > .build/last-build.log 2>&1; then
@@ -11,7 +11,7 @@ fi
 APP=.build/codehatch.app
 rm -rf "$APP" && mkdir -p "$APP/Contents/MacOS"
 mkdir -p "$APP/Contents/Resources"
-cp .build/release/codehatch "$APP/Contents/MacOS/" && cp Info.plist "$APP/Contents/" && cp Sources/portal.png "$APP/Contents/Resources/" && cp icon/AppIcon.icns "$APP/Contents/Resources/" && cp editor-helper/codehatch-helper-*.vsix "$APP/Contents/Resources/" 2>/dev/null && cp hook/codehatch-hook.sh "$APP/Contents/Resources/"
+cp .build/release/codehatch "$APP/Contents/MacOS/" && cp Info.plist "$APP/Contents/" && cp assets/menu-mark.png "$APP/Contents/Resources/portal.png" && cp assets/AppIcon.icns "$APP/Contents/Resources/" && cp editor-helper/codehatch-helper-*.vsix "$APP/Contents/Resources/" 2>/dev/null && cp hooks/codehatch-hook.sh "$APP/Contents/Resources/"
 # The updater (Sparkle) travels inside the app, and the program is told to look for it there.
 mkdir -p "$APP/Contents/Frameworks" && ditto .build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework "$APP/Contents/Frameworks/Sparkle.framework"
 install_name_tool -add_rpath @executable_path/../Frameworks "$APP/Contents/MacOS/codehatch" 2>/dev/null
