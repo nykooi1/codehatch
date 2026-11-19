@@ -2410,10 +2410,17 @@ final class PointerTracker: ObservableObject {
     static let panel = PointerTracker(), window = PointerTracker(), menu = PointerTracker()
     @Published private(set) var over: String?
     private var places: [String: CGRect] = [:]
-    func place(_ id: String, _ rect: CGRect) { places[id] = rect }
+    private var last: CGPoint?
+    /// A row moved (the list scrolled, or a session moved up): check again with the pointer where it last was, so the
+    /// highlight follows the row under a pointer that has not moved.
+    func place(_ id: String, _ rect: CGRect) {
+        places[id] = rect
+        if let last, rect.contains(last) || over == id { DispatchQueue.main.async { self.pointer(at: self.last) } }
+    }
     func forget(_ id: String) { places[id] = nil; if over == id { over = nil } }
     /// The pointer is at this point, in the window's content (top-left origin), or outside the window (nil).
     func pointer(at p: CGPoint?) {
+        last = p
         let now = p.flatMap { p in places.first { $0.value.contains(p) }?.key }
         if now != over {
             over = now
@@ -2731,11 +2738,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.hidesOnDeactivate = false
         panel.contentView = FirstClickHost(rootView: RootView(model: model, app: self).environmentObject(PointerTracker.panel))
-        // codehatch is never the app in front (it has no Dock icon), so macOS treats it as a background app and puts it
-        // to sleep between events ("App Nap"): its timers and pointer events are held back and batched, which shows as
-        // a hover highlight or menu that lags or waits for a nudge of the mouse. It is something you point at directly,
-        // so it is kept awake. It still does nothing while nothing is happening, so this costs no power.
-        awake = ProcessInfo.processInfo.beginActivity(options: [.userInitiatedAllowingIdleSystemSleep], reason: "codehatch responds to the pointer at the notch")
         setUpBeacon()
         setUpMenu()
         setUpStatusItem()
@@ -2963,7 +2965,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// The codehatch mark in the menu bar, the usual home for a utility like this: click it for the panel and the
     /// window, settings, and quitting. It can be hidden in settings.
     var statusItem: NSStatusItem?
-    var awake: NSObjectProtocol?
     func setUpStatusItem() {
         guard Prefs.bool("showMenuIcon") else { statusItem.map { NSStatusBar.system.removeStatusItem($0) }; statusItem = nil; return }
         guard statusItem == nil else { return }
