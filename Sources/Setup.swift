@@ -77,41 +77,36 @@ struct SetupView: View {
             }
             .frame(width: 52, height: 52)
             Text("Set up codehatch").font(.system(size: 20, weight: .semibold))
-            Text("codehatch works best with two small additions. Both are plain files you can read, both can be removed in settings, and neither sends anything anywhere.")
+            Text("codehatch works best with two small additions. Both are plain files you can read, you can remove either later, and neither sends anything anywhere.")
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let results {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 10) {
                     ForEach(Array(results.enumerated()), id: \.offset) { _, r in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Image(systemName: r.problem == nil ? "checkmark.circle.fill" : "exclamationmark.triangle.fill").foregroundStyle(r.problem == nil ? .green : .orange)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(r.what)
-                                if let p = r.problem { Text(p).font(.callout).foregroundStyle(.secondary) }
+                        if r.what == "Live updates", r.problem == nil {
+                            // Say plainly what works now: Claude Code needs nothing more; Codex needs its one approval.
+                            resultRow(.done, "Claude Code is ready", "Live updates are on for sessions you start from now on.")
+                            if Hooks.hasCodex {
+                                resultRow(.todo, "Codex: one step left", "In a Codex session, type /hooks and approve codehatch's. Codex asks before it runs new hooks.")
                             }
+                        } else {
+                            resultRow(r.problem == nil ? .done : .problem, r.what, r.problem)
                         }
                     }
                 }
                 .padding(.vertical, 4)
-                // What is left to do, where it cannot be missed: a box of its own, in full-size text that wraps, not a
-                // grey footnote. Without the Codex step, Codex sessions never update live, and nothing else says why.
-                let codexStep = Hooks.hasCodex && hooks, editorStep = !editors.isEmpty
-                if codexStep || editorStep {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(codexStep && editorStep ? "Two more things" : "One more thing").font(.system(size: 13, weight: .semibold))
-                        if codexStep {
-                            nextStep("In Codex, type /hooks once and approve them",
-                                     "Codex asks before it runs new hooks. Until you approve codehatch's, Codex sessions won't update live. Sessions that were already open need a restart.")
-                        }
-                        if editorStep {
-                            nextStep("Allow the link in your editor",
-                                     "The first time you jump to a session, VS Code or Cursor asks whether codehatch's helper may open a link. Tick Don't ask again, then Open.")
-                        }
+                // The rest is good to know rather than to do now: a quiet panel, in full-size text that wraps.
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Good to know").font(.system(size: 13, weight: .semibold))
+                    if !editors.isEmpty {
+                        Text("The first time you jump to a session, VS Code or Cursor asks whether codehatch's helper may open a link. Tick Don't ask again, then Open.")
+                            .font(.system(size: 12.5)).foregroundStyle(.primary.opacity(0.8)).fixedSize(horizontal: false, vertical: true)
                     }
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.orange.opacity(0.12)))
-                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.orange.opacity(0.45), lineWidth: 1))
+                    Text("Sessions that were already open show live updates once restarted.")
+                        .font(.system(size: 12.5)).foregroundStyle(.primary.opacity(0.8)).fixedSize(horizontal: false, vertical: true)
                 }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.05)))
                 HStack { Spacer(); Button("Done") { done() }.keyboardShortcut(.defaultAction) }
             } else {
                 VStack(alignment: .leading, spacing: 12) {
@@ -159,13 +154,15 @@ struct SetupView: View {
         }
         .padding(22).frame(width: 470)
     }
-    /// One thing left to do after setup: what to do, in bold, then why, both wrapping onto as many lines as they need.
-    func nextStep(_ title: String, _ why: String) -> some View {
+    enum Outcome { case done, todo, problem }
+    /// One line of what setup did: a tick when it is done, an arrow when one step is left, a warning when it failed.
+    func resultRow(_ o: Outcome, _ title: String, _ detail: String?) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: "arrow.right.circle.fill").foregroundStyle(.orange)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 13, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
-                Text(why).font(.system(size: 12.5)).foregroundStyle(.primary.opacity(0.8)).fixedSize(horizontal: false, vertical: true)
+            Image(systemName: o == .done ? "checkmark.circle.fill" : o == .todo ? "arrow.right.circle.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(o == .done ? Color.green : o == .todo ? Color.accentColor : Color.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).fixedSize(horizontal: false, vertical: true)
+                if let detail { Text(detail).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
             }
         }
     }
