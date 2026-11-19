@@ -156,7 +156,7 @@ def test_app_vscode(sb):
     if not os.path.exists(CODE):
         raise AssertionError("VS Code is not installed")
     # Anchored at the start, so it only matches VS Code itself and not some other command that mentions its path.
-    running = lambda: subprocess.run(["pgrep", "-f", "^/Applications/Visual Studio Code.app/Contents/"], capture_output=True).returncode == 0
+    running = lambda: subprocess.run(["pgrep", "-f", "^/Applications/Visual Studio Code.app/Contents/MacOS/"], capture_output=True).returncode == 0
     for _ in range(40):   # a copy from an earlier test run can take a few seconds to finish closing
         if not running():
             break
@@ -210,6 +210,160 @@ def test_app_vscode(sb):
             time.sleep(0.5)
         if saved is not None:
             open(NOTE, "w").write(saved)   # put back the note about your own front terminal
+
+
+WINDOWS = os.path.join(os.path.expanduser("~"), ".codehatch", "windows")
+
+
+def window_notes():
+    """The helper's notes of the editor windows: file name -> what it says."""
+    import glob, json
+    out = {}
+    for f in glob.glob(os.path.join(WINDOWS, "*.json")):
+        try:
+            out[os.path.basename(f)] = json.load(open(f))
+        except (OSError, ValueError):
+            pass
+    return out
+
+
+def test_app_editor_windows(sb):
+    """A click on a session in an editor brings back the window it is in, never a new one: also when the session was
+    started in a subfolder, in a folder no window has open, or in the window that is not in front. Two real VS Code
+    windows, in a throwaway profile."""
+    if not os.path.exists(CODE):
+        raise AssertionError("VS Code is not installed")
+    running = lambda: subprocess.run(["pgrep", "-f", "^/Applications/Visual Studio Code.app/Contents/MacOS/"], capture_output=True).returncode == 0
+    for _ in range(40):
+        if not running():
+            break
+        time.sleep(0.5)
+    if running():
+        raise AssertionError("VS Code is already open. Quit it first: the test needs to be the only copy running, so its links reach the test windows.")
+    import glob, json, uuid
+    vsix = sorted(glob.glob(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "editor-helper", "codehatch-helper-*.vsix")))
+    a, b = os.path.realpath(sb.repo("codehatch-test-a")), os.path.realpath(sb.repo("codehatch-test-b"))
+    sub = os.path.join(a, "app", "src")
+    os.makedirs(sub)
+    data, exts = sb.path("vscode-data"), sb.path("vscode-extensions")
+    os.makedirs(os.path.join(data, "User"))
+    with open(os.path.join(data, "User", "settings.json"), "w") as f:
+        json.dump({"security.workspace.trust.enabled": False, "extensions.confirmedUriHandlerExtensionIds": ["codehatch.codehatch-helper"],
+                   "update.mode": "none", "telemetry.telemetryLevel": "off", "workbench.startupEditor": "none", "window.restoreWindows": "none"}, f)
+    base = [CODE, "--user-data-dir", data, "--extensions-dir", exts]
+    r = subprocess.run(base + ["--install-extension", vsix[-1]], capture_output=True, text=True, timeout=120)
+    if "successfully installed" not in r.stdout:
+        raise AssertionError("could not install the helper into the test profile: " + (r.stdout + r.stderr)[-200:])
+    saved = open(NOTE).read() if os.path.exists(NOTE) else None
+    last = subprocess.run(["defaults", "read", "ai.codehatch.app", "lastEditorApp"], capture_output=True, text=True).stdout.strip()
+    def link(path, **q):
+        import urllib.parse
+        subprocess.run(["/usr/bin/open", "-g", "vscode://codehatch.codehatch-helper/%s?%s" % (path, urllib.parse.urlencode(q))])
+    def note_for(folder):
+        return next((n for n in window_notes().values() if n.get("folders") == [folder]), None)
+    def go(pid, cwd):
+        r = subprocess.run([APP, "--go", str(pid), cwd], capture_output=True, text=True, timeout=60)
+        return r.stdout.strip()
+    try:
+        for folder in (a, b):
+            subprocess.run(base + ["--new-window", folder], capture_output=True, timeout=60)
+            wait("the window for %s and its helper" % os.path.basename(folder), lambda: note_for(folder) and note().get("folder") == folder, timeout=60)
+            # A terminal in that window (resumed in the window's project, as codehatch does): its shell is the "session".
+            link("resume", tool="claude", id=str(uuid.uuid4()), cwd=folder)
+            wait("a terminal in the window for " + os.path.basename(folder), lambda: (note_for(folder) or {}).get("shells"), timeout=30)
+        shell_a, shell_b = note_for(a)["shells"][0], note_for(b)["shells"][0]
+        before = set(window_notes())
+        time.sleep(1)
+
+        # B is in front. A session in A, started in a subfolder of A's project.
+        eq(go(shell_a, sub), "window " + a, "a session started in a subfolder: its own window, found by its terminal")
+        wait("A's terminal in front", lambda: note().get("pid") == shell_a and note().get("folder") == a, timeout=20)
+
+        # A session in B, started in a folder no window has open (as in a home folder).
+        eq(go(shell_b, os.path.expanduser("~")), "window " + b, "a session started outside any project: its own window")
+        wait("B's terminal in front", lambda: note().get("pid") == shell_b and note().get("folder") == b, timeout=20)
+
+        # Back to A, with a folder that does not exist at all.
+        eq(go(shell_a, "/nonexistent/folder"), "window " + a, "a session whose folder is gone: still its own window")
+        wait("A's terminal in front again", lambda: note().get("pid") == shell_a, timeout=20)
+
+        # A window still running an older helper notes nothing: codehatch falls back to the session's own folder, which
+        # brings back the right window when the session was started at the top of its project, as it did before.
+        for name, n in window_notes().items():
+            if n.get("folders") == [a]:
+                os.remove(os.path.join(WINDOWS, name))
+        eq(go(shell_a, a), "folder " + a, "a window with no note: found by the session's own folder")
+        wait("A's terminal in front, with no note", lambda: note().get("pid") == shell_a and note().get("folder") == a, timeout=20)
+
+        time.sleep(3)   # a new window would have noted itself by now
+        eq(sorted(set(window_notes()) - before), [], "no new editor window was opened")
+    finally:
+        subprocess.run(["pkill", "-f", "user-data-dir " + data], capture_output=True)
+        for _ in range(30):
+            if subprocess.run(["pgrep", "-f", data], capture_output=True).returncode != 0:
+                break
+            time.sleep(0.5)
+        if saved is not None:
+            open(NOTE, "w").write(saved)
+        if last:
+            subprocess.run(["defaults", "write", "ai.codehatch.app", "lastEditorApp", last])
+
+
+def test_app_editor_reopen_once(sb):
+    """Reopening a closed session in an editor whose project window is not open yet: the window opens, a terminal in
+    that project resumes the session, and the link to the helper is sent exactly once, so the editor asks at most once
+    (before "Don't ask again" is ticked it asks about every link). Real VS Code, throwaway profile."""
+    if not os.path.exists(CODE):
+        raise AssertionError("VS Code is not installed")
+    running = lambda: subprocess.run(["pgrep", "-f", "^/Applications/Visual Studio Code.app/Contents/MacOS/"], capture_output=True).returncode == 0
+    for _ in range(40):
+        if not running():
+            break
+        time.sleep(0.5)
+    if running():
+        raise AssertionError("VS Code is already open. Quit it first: the test needs to be the only copy running, so its links reach the test windows.")
+    import glob, json, uuid
+    vsix = sorted(glob.glob(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "editor-helper", "codehatch-helper-*.vsix")))
+    repo = os.path.realpath(sb.repo("codehatch-test-reopen"))
+    data, exts = sb.path("vscode-data"), sb.path("vscode-extensions")
+    os.makedirs(os.path.join(data, "User"))
+    with open(os.path.join(data, "User", "settings.json"), "w") as f:
+        json.dump({"security.workspace.trust.enabled": False, "extensions.confirmedUriHandlerExtensionIds": ["codehatch.codehatch-helper"],
+                   "update.mode": "none", "telemetry.telemetryLevel": "off", "workbench.startupEditor": "none", "window.restoreWindows": "none"}, f)
+    base = [CODE, "--user-data-dir", data, "--extensions-dir", exts]
+    r = subprocess.run(base + ["--install-extension", vsix[-1]], capture_output=True, text=True, timeout=120)
+    if "successfully installed" not in r.stdout:
+        raise AssertionError("could not install the helper into the test profile: " + (r.stdout + r.stderr)[-200:])
+    saved = open(NOTE).read() if os.path.exists(NOTE) else None
+    last = subprocess.run(["defaults", "read", "ai.codehatch.app", "lastEditorApp"], capture_output=True, text=True).stdout.strip()
+    log = os.path.join(os.path.expanduser("~"), "Library", "Logs", "codehatch.log")
+    try:
+        before = set(window_notes())
+        subprocess.run(base + ["--new-window"], capture_output=True, timeout=60)   # VS Code open, but not on this project
+        wait("the empty test window and its helper", lambda: set(window_notes()) - before, timeout=60)
+        mark = os.path.getsize(log) if os.path.exists(log) else 0
+        sid = str(uuid.uuid4())
+        r = subprocess.run([APP, "-reopenIn", "vscode", "--reopen", sid, repo], capture_output=True, text=True, timeout=90)
+        eq(r.stdout.strip(), "editor Visual Studio Code", "it reopens in the chosen editor")
+        win = wait("the project's window, with one terminal", lambda: next((n for n in window_notes().values() if n.get("folders") == [repo] and n.get("shells")), None), timeout=30)
+        eq(len(win["shells"]), 1, "exactly one terminal was opened to resume it")
+        cwd = subprocess.run(["/usr/sbin/lsof", "-a", "-p", str(win["shells"][0]), "-d", "cwd", "-Fn"], capture_output=True, text=True).stdout
+        if repo not in cwd:
+            raise AssertionError("the resuming terminal is not in the session's folder")
+        with open(log, "rb") as f:
+            f.seek(mark)
+            sent = [l for l in f.read().decode("utf8", "replace").splitlines() if "resume: open vscode://codehatch.codehatch-helper/resume" in l]
+        eq(len(sent), 1, "the link to the helper was sent once")
+    finally:
+        subprocess.run(["pkill", "-f", "user-data-dir " + data], capture_output=True)
+        for _ in range(30):
+            if subprocess.run(["pgrep", "-f", data], capture_output=True).returncode != 0:
+                break
+            time.sleep(0.5)
+        if saved is not None:
+            open(NOTE, "w").write(saved)
+        if last:
+            subprocess.run(["defaults", "write", "ai.codehatch.app", "lastEditorApp", last])
 
 
 TABS = {
@@ -295,4 +449,4 @@ def test_app_terminal_real_claude(sb):
                 pass
 
 
-TESTS = [test_app_terminal, test_app_iterm, test_app_iterm_tabs, test_app_terminal_real_claude, test_app_vscode]
+TESTS = [test_app_terminal, test_app_iterm, test_app_iterm_tabs, test_app_terminal_real_claude, test_app_vscode, test_app_editor_windows, test_app_editor_reopen_once]

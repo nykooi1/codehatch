@@ -100,13 +100,13 @@ def escaped(cwd):
     return "".join(c if c.isalnum() else "-" for c in cwd)
 
 
-def claude_session(sb, pid, cwd, status="idle", ago=60, sid=None, waiting=None, name=None, name_source="derived", entrypoint="cli"):
+def claude_session(sb, pid, cwd, status="idle", ago=60, sid=None, waiting=None, name=None, name_source="derived", entrypoint="cli", kind="interactive"):
     sid = sid or str(uuid.uuid4())
     d = os.path.join(sb.home, ".claude", "sessions")
     os.makedirs(d, exist_ok=True)
     at = now_ms() - int(ago * 1000)
     o = {"pid": pid, "sessionId": sid, "cwd": cwd, "status": status, "startedAt": at - 60000, "updatedAt": at, "statusUpdatedAt": at,
-         "kind": "interactive", "entrypoint": entrypoint, "name": name or (os.path.basename(cwd) + "-ab"), "nameSource": name_source}
+         "kind": kind, "entrypoint": entrypoint, "name": name or (os.path.basename(cwd) + "-ab"), "nameSource": name_source}
     if waiting:
         o["waitingFor"] = waiting
     with open(os.path.join(d, "%d.json" % pid), "w") as f:
@@ -347,6 +347,39 @@ def test_recently_closed(sb):
     eq(d["recent"][0]["state"], "closed", "its state")
     eq(d["recent"][0]["branch"], "fix/cart-badge", "its branch")
     eq(dump(sb, "-showRecent", "NO")["recent"], [], "nothing when the setting is off")
+
+
+def test_renamed_closed_session(sb):
+    """A session renamed with /rename keeps that name once closed, even after Claude Code writes a newer title."""
+    r = sb.repo("storefront")
+    renamed = str(uuid.uuid4())
+    claude_history(sb, renamed, r, [user("fix the login", r), title("Fix login redirect"),
+                                    {"type": "custom-title", "customTitle": "Login, take two"}, title("A later title")])
+    plain = str(uuid.uuid4())
+    claude_history(sb, plain, r, [user("add tests", r), title("Add unit tests")])
+    closed = {s["id"]: s for s in dump(sb)["recent"]}
+    eq(closed[renamed]["title"], "Login, take two", "the name given with /rename")
+    eq(closed[plain]["title"], "Add unit tests", "Claude Code's own title when never renamed")
+
+
+def test_background_sessions_hidden(sb):
+    """Sessions Claude Code runs in the background (a fork) are left out, running or ended, even when hooks speak."""
+    r = sb.repo("storefront")
+    normal = claude_session(sb, sb.sleeper(), r, "idle", ago=30)
+    claude_history(sb, normal, r, [user("x", r), title("Normal session")])
+    pid = sb.sleeper()
+    fork = claude_session(sb, pid, r, "idle", ago=30, kind="bg")
+    claude_history(sb, fork, r, [dict(user("x", r), sessionKind="bg"), title("Forked session")])
+    hook_event(sb, "claude", fork, "UserPromptSubmit", ago=2, cwd=r, pid=pid)
+    ended = str(uuid.uuid4())
+    claude_history(sb, ended, r, [dict(user("x", r), sessionKind="bg"), title("Ended fork")])
+    talks = str(uuid.uuid4())   # a normal conversation that only mentions the marker, as text
+    claude_history(sb, talks, r, [user('it says "sessionKind":"bg" in the file', r), title("Talks about forks")])
+    d = dump(sb, "-liveUpdates", "YES")
+    ids = [s["id"] for s in d["sessions"]] + [s["id"] for s in d["recent"]]
+    eq(normal in ids and talks in ids, True, "normal sessions are listed")
+    eq(fork in ids, False, "a running background session is left out, even after a hook event")
+    eq(ended in ids, False, "an ended background session is left out of recently closed")
 
 
 def test_hooks_claude(sb):
@@ -711,7 +744,7 @@ def alive(pid):
 
 
 FAST = [test_claude_states, test_claude_just_finished, test_claude_details, test_last_message_either_side, test_claude_title_fallbacks, test_claude_dead_session_ignored,
-        test_order_recent_and_by_repo, test_hidden_repos_and_labels, test_recently_closed, test_hooks_claude, test_codex_states,
+        test_order_recent_and_by_repo, test_hidden_repos_and_labels, test_recently_closed, test_renamed_closed_session, test_background_sessions_hidden, test_hooks_claude, test_codex_states,
         test_codex_new_style, test_hooks_codex, test_mixed_tools_summary, test_hook_script, test_hook_never_waits, test_hooks_install_and_remove, test_editor_helper, test_close_session,
         test_dashboard_groups, test_dashboard_recently_closed, test_beside_the_notch, test_beside_the_notch_quiet, test_defaults_and_menu,
         test_everything_draws, test_drawing_leaves_settings_alone, test_automation_denial_is_recognised, test_setup_installs_both]

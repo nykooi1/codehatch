@@ -121,7 +121,7 @@ struct SettingsView: View {
                     Text("1 day").tag(1); Text("3 days").tag(3); Text("7 days").tag(7); Text("14 days").tag(14); Text("30 days").tag(30)
                 }.disabled(!showRecent)
                 Picker("Resume them in", selection: $reopenIn) {
-                    Text("Where I last was").tag("auto")
+                    Text("Where each one ran").tag("auto")
                     ForEach(Prefs.editors.filter { FileManager.default.fileExists(atPath: $0.app) }, id: \.id) { Text($0.label).tag($0.id) }
                     Text("Terminal").tag("terminal")
                     if FileManager.default.fileExists(atPath: Terminals.paths["iterm"]!) { Text("iTerm2").tag("iterm") }

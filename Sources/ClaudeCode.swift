@@ -67,6 +67,8 @@ enum Loader {
         var out: [Session] = [], seen = Set<String>()
         for f in files.sorted(by: { $0.at > $1.at }).prefix(60) {
             let sid = f.url.deletingPathExtension().lastPathComponent
+            // A background session (a fork, for one) is left out here too, running or ended, as it is from the open ones.
+            guard !background.contains(sid), !isBackground(f.url) else { continue }
             guard let cwd = cwd(of: f.url), FileManager.default.fileExists(atPath: cwd), let name = title(for: sid, cwd: cwd) else { continue }
             // A conversation that was resumed can be saved under more than one id: show the newest only.
             guard seen.insert(cwd + "\n" + name).inserted else { continue }
@@ -78,37 +80,57 @@ enum Loader {
         recentCache = (now, out)
         return out.filter { !live.contains($0.id) }
     }
+    /// Whether a saved conversation was a background session. Claude Code marks each line of one with
+    /// "sessionKind":"bg", from near the start of its history: worked out with the folder, in the same single read.
+    static var backgroundCache: [String: Bool] = [:]
+    static func isBackground(_ url: URL) -> Bool {
+        if backgroundCache[url.path] == nil { _ = readStart(url) }
+        return backgroundCache[url.path] ?? false
+    }
     /// The folder a saved conversation was running in, read from the start of its history.
     static var cwdCache: [String: String] = [:]
     static func cwd(of url: URL) -> String? {
         if let c = cwdCache[url.path] { return c }
+        return readStart(url)
+    }
+    /// Read the start of a saved conversation once: its folder, and whether it was a background session.
+    static func readStart(_ url: URL) -> String? {
         guard let h = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? h.close() }
         let head = h.readData(ofLength: 400_000)
+        backgroundCache[url.path] = head.range(of: Data("\"sessionKind\":\"bg\"".utf8)) != nil
         guard let r = head.range(of: Data("\"cwd\":\"".utf8)), let q = head[r.upperBound...].firstIndex(of: UInt8(ascii: "\"")) else { return nil }
         let c = String(decoding: head[r.upperBound..<q], as: UTF8.self)
         cwdCache[url.path] = c
         return c
     }
 
-    /// The newest title Claude Code wrote into this session's history, found by searching the file from the end.
+    /// A session's name, as Claude Code itself picks it: the newest name you gave it with /rename, then the newest title
+    /// Claude Code wrote, then the first thing asked. Both are found by searching the file from the end, and next time
+    /// only in what has been added since.
+    static var customTitles: [String: String] = [:]
     static func title(for sid: String, cwd: String) -> String? {
         let esc = cwd.replacingOccurrences(of: "[^A-Za-z0-9]", with: "-", options: .regularExpression)
         let url = home.appendingPathComponent(".claude/projects/\(esc)/\(sid).jsonl")
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path), let size = attrs[.size] as? UInt64 else { return nil }
-        if let c = titleCache[sid], c.size == size { return c.title }
+        if let c = titleCache[sid], c.size == size { return customTitles[sid] ?? c.title }
         var t: String? = titleCache[sid]?.title
-        if let data = added(to: url, since: t == nil ? nil : titleCache[sid]?.size, now: size),
-           let r = data.range(of: Data("\"type\":\"ai-title\"".utf8), options: .backwards) {
-            let nl = UInt8(ascii: "\n")
-            let start = data[..<r.lowerBound].lastIndex(of: nl).map { $0 + 1 } ?? data.startIndex
-            let end = data[r.upperBound...].firstIndex(of: nl) ?? data.endIndex
-            if let o = try? JSONSerialization.jsonObject(with: data[start..<end]) as? [String: Any], let s = o["aiTitle"] as? String { t = s }
+        if let data = added(to: url, since: t == nil ? nil : titleCache[sid]?.size, now: size) {
+            if let s = newest(in: data, type: "custom-title", field: "customTitle") { customTitles[sid] = s.isEmpty ? nil : s }
+            if let s = newest(in: data, type: "ai-title", field: "aiTitle") { t = s }
         }
         // No title yet (Claude Code writes one a little after the first message): use the first thing that was asked.
         if t == nil { t = firstPrompt(url) ?? "Untitled session" }
         titleCache[sid] = (size, t)
-        return t
+        return customTitles[sid] ?? t
+    }
+    /// The given field of the newest line of this type in part of a history file.
+    static func newest(in data: Data, type: String, field: String) -> String? {
+        guard let r = data.range(of: Data("\"type\":\"\(type)\"".utf8), options: .backwards) else { return nil }
+        let nl = UInt8(ascii: "\n")
+        let start = data[..<r.lowerBound].lastIndex(of: nl).map { $0 + 1 } ?? data.startIndex
+        let end = data[r.upperBound...].firstIndex(of: nl) ?? data.endIndex
+        return (try? JSONSerialization.jsonObject(with: data[start..<end]) as? [String: Any])?[field] as? String
     }
 
     /// Where a session is and which git branch it is on, read from the end of its history file.

@@ -2,7 +2,7 @@
   "name": "codehatch-helper",
   "displayName": "codehatch helper",
   "description": "Lets the codehatch portal bring one specific terminal tab to the front, tells it which terminal you are in, and reopens a closed Claude Code or Codex session in a new terminal when you pick it in the portal. It has no interface and does nothing else.",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "publisher": "codehatch",
   "license": "MIT",
   "repository": {

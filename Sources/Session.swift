@@ -89,5 +89,20 @@ struct Session: Identifiable, Equatable {
     }
 }
 
+/// The app each session ran in (Terminal, iTerm2, Cursor, VS Code...), noted while it is open, so that once it has
+/// closed it reopens where it was. Kept for the newest 300 sessions, in the app's settings.
+enum RanIn {
+    static let key = "sessionApps"
+    static var all: [String: String] { UserDefaults.standard.dictionary(forKey: key) as? [String: String] ?? [:] }
+    static func note(_ found: [String: String]) {
+        var all = Self.all, order = UserDefaults.standard.stringArray(forKey: key + "Order") ?? []
+        var changed = false
+        for (id, app) in found where all[id] != app { all[id] = app; order.removeAll { $0 == id }; order.append(id); changed = true }
+        guard changed else { return }
+        while order.count > 300 { all[order.removeFirst()] = nil }
+        UserDefaults.standard.set(all, forKey: key); UserDefaults.standard.set(order, forKey: key + "Order")
+    }
+}
+
 /// Sessions you have opened from the panel, so "finished" clears once you've been to look.
 enum Seen { static var at: [String: Double] = [:] }   // session id → when you were last in it, in milliseconds

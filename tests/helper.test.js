@@ -17,14 +17,18 @@ const editor = {
     registerUriHandler: (h) => { handler = h; return { dispose() {} }; },
     onDidChangeActiveTerminal: () => ({ dispose() {} }),
     onDidChangeWindowState: () => ({ dispose() {} }),
+    onDidOpenTerminal: () => ({ dispose() {} }),
+    onDidCloseTerminal: () => ({ dispose() {} }),
     createTerminal: (opts) => { const made = { opts, sent: [], show() {}, sendText(text) { made.sent.push(text); } }; created.push(made); return made; },
   },
-  workspace: { workspaceFolders: [{ uri: { fsPath: "/Projects/storefront" } }] },
+  workspace: { workspaceFolders: [{ uri: { fsPath: "/Projects/storefront" } }], onDidChangeWorkspaceFolders: () => ({ dispose() {} }) },
+  env: { appName: "Cursor" },
   commands: { executeCommand: async (name) => { commands.push(name); } },
 };
 const load = Module._load;
 Module._load = (request, ...rest) => (request === "vscode" ? editor : load(request, ...rest));
-require("../editor-helper/extension.js").activate({ subscriptions: [] });
+const helper = require("../editor-helper/extension.js");
+helper.activate({ subscriptions: [] });
 
 const send = (p, query) => handler.handleUri({ path: p, query });
 const note = () => JSON.parse(fs.readFileSync(path.join(home, ".codehatch", "active-terminal.json"), "utf8"));
@@ -33,6 +37,13 @@ const id = "11111111-2222-3333-4444-555555555555";
 (async () => {
   await new Promise((r) => setTimeout(r, 20));
   assert.deepStrictEqual([note().pid, note().folder], [101, "/Projects/storefront"], "on start it notes the terminal in front and the folder");
+  // Its note of this window: the folders it has open and its terminals' shells, so the portal can bring this window
+  // forward by its own folder. Removed when the window closes.
+  const windowNote = path.join(home, ".codehatch", "windows", process.pid + ".json");
+  const w = JSON.parse(fs.readFileSync(windowNote, "utf8"));
+  assert.deepStrictEqual([w.folders, w.shells, w.app], [["/Projects/storefront"], [101, 202, 303], "Cursor"], "it notes this window's folders and terminals");
+  helper.deactivate();
+  assert.strictEqual(fs.existsSync(windowNote), false, "and removes that note when the window closes");
 
   await send("/focus", "pids=999,202,5");
   assert.deepStrictEqual(shown, [202], "focus shows the terminal whose process is in the list, and only that one");

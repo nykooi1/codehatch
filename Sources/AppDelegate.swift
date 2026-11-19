@@ -34,6 +34,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // --focus-terminal <pid>: bring the Terminal or iTerm2 tab running this process to the front, the way clicking
         // its session does, print what happened, and quit. --terminal-run <kind> <folder> <command>: open a new tab
         // there and run the command, the way resuming a session does. Both are for the tests.
+        // --go <pid> <folder>: do exactly what a click on an open session running as that process does, say what it
+        // did, and stop. For the tests against the real editors.
+        if let i = CommandLine.arguments.firstIndex(of: "--go"), i + 2 < CommandLine.arguments.count, let pid = Int32(CommandLine.arguments[i + 1]) {
+            let (found, chain) = Loader.owner(of: pid)
+            guard let app = found else { print("no-app"); exit(1) }
+            print(goTo(Session(id: "test-go", pid: pid, cwd: CommandLine.arguments[i + 2], status: "busy", updatedAt: 0, title: "test"), app: app, chain: chain)); exit(0)
+        }
+        // --reopen <session id> <folder>: reopen a closed Claude Code session exactly as a click does, say where, stop.
+        if let i = CommandLine.arguments.firstIndex(of: "--reopen"), i + 2 < CommandLine.arguments.count {
+            print(reopen(Session(id: CommandLine.arguments[i + 1], pid: 0, cwd: CommandLine.arguments[i + 2], status: "closed", updatedAt: 0, title: "test"))); exit(0)
+        }
         if let i = CommandLine.arguments.firstIndex(of: "--focus-terminal"), i + 1 < CommandLine.arguments.count, let pid = Int32(CommandLine.arguments[i + 1]) {
             let app = Loader.owner(of: pid).app ?? ""
             guard let kind = Terminals.kind(app), let tty = Terminals.tty(of: pid) else { print("not-a-terminal app=\(app)"); exit(1) }
@@ -99,6 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         setUpMenu()
         setUpStatusItem()
+        if Prefs.bool("didSetup"), !Demo.on, ProcessInfo.processInfo.environment["CODEHATCH_HOME"] == nil { queue.async { Helper.upgradeIfOld() } }
         if Setup.wanted || CommandLine.arguments.contains("--setup") { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.showSetup() } }
         if !Demo.on, ProcessInfo.processInfo.environment["CODEHATCH_HOME"] == nil { updater.startUpdater() }
         screen = AppDelegate.notchScreen()
@@ -233,6 +245,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var codexHeard: Set<String> = []
     /// True if this changed file means the list needs reloading.
     func matters(_ path: String) -> Bool {
+        // The editor helper's notes of its windows are read only when a session is clicked: no reason to reload.
+        if path.contains("/.codehatch/windows/") { return false }
         // The first hook event of a Codex session is a session codehatch may not have found yet: hooks only update the
         // Codex sessions it has found, so list the Codex programs afresh on this reload instead of using a list up to
         // ten seconds old. Later events from the same session change nothing here.
@@ -281,6 +295,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let s = Labels.apply(Loader.load().filter { !hide.contains($0.project.lowercased()) })
             let past = Labels.apply((Prefs.bool("showRecent") ? Loader.recent(excluding: Set(s.map(\.id))) : []).filter { !hide.contains($0.project.lowercased()) })
             let here = Loader.currentSession(among: s)
+            // Note the app each open session is in (looked up once per session, then remembered).
+            RanIn.note(Dictionary(s.compactMap { x in x.pid > 0 ? Loader.owner(of: x.pid).app.map { (x.id, $0) } : nil }, uniquingKeysWith: { a, _ in a }))
             // Having a session's terminal in front counts as having seen it, but only while its editor is the app
             // you are actually in. If you start something and switch to a browser, it should still turn green
             // when it finishes: you were not looking.
@@ -678,45 +694,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { if self.model.closed?.title == title { withAnimation { self.model.closed = nil } } }
         queue.async { Closer.close(s.pid); self.refresh() }
     }
+    /// Editors that open folders, by app name, and the link prefix each one answers to.
+    static let editorSchemes = ["Cursor": "cursor", "Code": "vscode", "Visual Studio Code": "vscode", "Windsurf": "windsurf", "VSCodium": "vscodium", "Code - Insiders": "vscode-insiders"]
     /// Reopen a closed session: bring its project's editor window forward (opening it if need be), then ask the
     /// helper in that window to start a terminal and resume the conversation there.
     func resume(_ s: Session) {
         dbg("resume: \(s.title) \(s.id) in \(s.cwd)")
         close()
-        queue.async {
-            // The editor you last jumped into from here; failing that, the first one installed.
-            let known = [("Cursor", "cursor"), ("Visual Studio Code", "vscode"), ("Windsurf", "windsurf"), ("VSCodium", "vscodium")]
-            var app = UserDefaults.standard.string(forKey: "lastEditorApp"), scheme = UserDefaults.standard.string(forKey: "lastEditorScheme")
-            if let pick = Prefs.editors.first(where: { $0.id == Prefs.string("reopenIn") }) { app = pick.app; scheme = pick.scheme }
-            if app == nil || !FileManager.default.fileExists(atPath: app!) {
-                let hit = known.first { FileManager.default.fileExists(atPath: "/Applications/\($0.0).app") }
-                app = hit.map { "/Applications/\($0.0).app" }; scheme = hit?.1
-            }
-            func run(_ args: [String]) {
-                let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/open"); p.arguments = args
-                do { try p.run(); p.waitUntilExit(); dbg("resume: open \(args.last ?? "") exited \(p.terminationStatus)") } catch { dbg("resume: open failed \(error)") }
-            }
-            if let pick = Terminals.paths[Prefs.string("reopenIn")] { app = pick; scheme = Prefs.string("reopenIn") }
-            if let app, let kind = Terminals.kind(app), FileManager.default.fileExists(atPath: app) {
-                Terminals.run(kind, in: s.cwd, command: s.resumeCommand)
-                Loader.recentCache.at = 0; self.refresh()
-                return
-            }
-            guard let app, let scheme else {
-                // No editor with the helper: leave the command on the clipboard to paste into any terminal.
-                DispatchQueue.main.async { NSPasteboard.general.clearContents(); NSPasteboard.general.setString("cd \"\(s.cwd)\" && \(s.resumeCommand)", forType: .string); NSSound.beep() }
-                return
-            }
-            run(["-a", app, s.cwd])
-            var q = URLComponents(); q.queryItems = [URLQueryItem(name: "tool", value: s.tool), URLQueryItem(name: "id", value: s.id.replacingOccurrences(of: "codex-", with: "")), URLQueryItem(name: "cwd", value: s.cwd)]
-            let link = "\(scheme)://codehatch.codehatch-helper/resume?" + (q.percentEncodedQuery ?? "")
-            // Sent several times: the window may still be opening. The helper acts on the first one that reaches the
-            // right window and ignores the rest.
-            var last = 0.0
-            for at in [0.6, 1.5, 3.5, 7.0] { Thread.sleep(forTimeInterval: at - last); last = at; run(["-g", link]) }
-            Loader.recentCache.at = 0
-            self.refresh()
+        queue.async { self.reopen(s) }
+    }
+    /// What resuming does, step by step; says where it reopened the session, for the tests.
+    @discardableResult func reopen(_ s: Session) -> String {
+        // The editor you last jumped into from here; failing that, the first one installed.
+        let known = [("Cursor", "cursor"), ("Visual Studio Code", "vscode"), ("Windsurf", "windsurf"), ("VSCodium", "vscodium")]
+        var app = UserDefaults.standard.string(forKey: "lastEditorApp"), scheme = UserDefaults.standard.string(forKey: "lastEditorScheme")
+        // Left to codehatch: the app this session ran in, if it was seen open and that app is still here.
+        if Prefs.string("reopenIn") == "auto", let ran = RanIn.all[s.id], FileManager.default.fileExists(atPath: ran) {
+            let name = ((ran as NSString).lastPathComponent as NSString).deletingPathExtension
+            if let kind = Terminals.kind(ran) { app = ran; scheme = kind }
+            else if let sch = AppDelegate.editorSchemes[name] { app = ran; scheme = sch }
+            dbg("resume: ran in \(name)")
         }
+        if let pick = Prefs.editors.first(where: { $0.id == Prefs.string("reopenIn") }) { app = pick.app; scheme = pick.scheme }
+        if app == nil || !FileManager.default.fileExists(atPath: app!) {
+            let hit = known.first { FileManager.default.fileExists(atPath: "/Applications/\($0.0).app") }
+            app = hit.map { "/Applications/\($0.0).app" }; scheme = hit?.1
+        }
+        func run(_ args: [String]) {
+            let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/open"); p.arguments = args
+            do { try p.run(); p.waitUntilExit(); dbg("resume: open \(args.last ?? "") exited \(p.terminationStatus)") } catch { dbg("resume: open failed \(error)") }
+        }
+        if let pick = Terminals.paths[Prefs.string("reopenIn")] { app = pick; scheme = Prefs.string("reopenIn") }
+        if let app, let kind = Terminals.kind(app), FileManager.default.fileExists(atPath: app) {
+            Terminals.run(kind, in: s.cwd, command: s.resumeCommand)
+            Loader.recentCache.at = 0; self.refresh()
+            return "terminal " + kind
+        }
+        guard let app, let scheme else {
+            // No editor with the helper: leave the command on the clipboard to paste into any terminal.
+            DispatchQueue.main.async { NSPasteboard.general.clearContents(); NSPasteboard.general.setString("cd \"\(s.cwd)\" && \(s.resumeCommand)", forType: .string); NSSound.beep() }
+            return "clipboard"
+        }
+        run(["-a", app, s.cwd])
+        var q = URLComponents(); q.queryItems = [URLQueryItem(name: "tool", value: s.tool), URLQueryItem(name: "id", value: s.id.replacingOccurrences(of: "codex-", with: "")), URLQueryItem(name: "cwd", value: s.cwd)]
+        let link = "\(scheme)://codehatch.codehatch-helper/resume?" + (q.percentEncodedQuery ?? "")
+        // Sent once, when it can be acted on: until "Don't ask again" is ticked, the editor asks about every link, so
+        // sending it again and again (in case the window was still opening) asked again and again. Wait until the
+        // helper in a window with this project has noted itself, and the editor is in front; at most 15 seconds,
+        // for an editor that has to start first. An older helper notes no windows: then send after 3 seconds.
+        let inProject = { Helper.windows().contains { $0.folders.contains { s.cwd == $0 || s.cwd.hasPrefix($0 + "/") } } }
+        let started = Date()
+        while Date().timeIntervalSince(started) < 15 {
+            let ready = inProject() && NSWorkspace.shared.frontmostApplication?.bundleURL?.path == app
+            if ready || (Date().timeIntervalSince(started) > 3 && Helper.windows().isEmpty) { break }
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+        run(["-g", link])
+        Loader.recentCache.at = 0
+        refresh()
+        return "editor " + ((app as NSString).lastPathComponent as NSString).deletingPathExtension
     }
     func go(_ s: Session) {
         if Demo.on {
@@ -739,31 +776,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         queue.async {
             let (found, chain) = Loader.owner(of: s.pid)
             guard let app = found else { dbg("go: no owning app found"); NSSound.beep(); return }
-            let name = ((app as NSString).lastPathComponent as NSString).deletingPathExtension
-            // Editors that open folders, and the link prefix each one answers to.
-            let editors = ["Cursor": "cursor", "Code": "vscode", "Visual Studio Code": "vscode", "Windsurf": "windsurf", "VSCodium": "vscodium", "Code - Insiders": "vscode-insiders"]
-            func run(_ args: [String]) {
-                let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/open"); p.arguments = args
-                do { try p.run(); p.waitUntilExit(); dbg("go: open \(args.last ?? "") exited \(p.terminationStatus)") } catch { dbg("go: open failed \(error)") }
-            }
-            if let kind = Terminals.kind(app) {
-                UserDefaults.standard.set(app, forKey: "lastEditorApp"); UserDefaults.standard.set(kind, forKey: "lastEditorScheme")
-                // The exact tab, by the terminal device the session runs on; failing that, just the app.
-                if let tty = Terminals.tty(of: s.pid), Terminals.focus(kind, tty: tty) { return }
-                run(["-a", app]); return
-            }
-            guard let scheme = editors[name] else { run(["-a", app]); return }
-            UserDefaults.standard.set(app, forKey: "lastEditorApp"); UserDefaults.standard.set(scheme, forKey: "lastEditorScheme")
-            run(["-a", app, s.cwd])
-            // Then ask the helper inside the editor (if installed) to show the terminal tab this session is running in.
-            // Sent twice, because the first can arrive before the right window has come forward.
-            // A session in the extension's chat panel has no terminal tab: ask the helper to bring the panel forward.
-            var panel = URLComponents(); panel.queryItems = [URLQueryItem(name: "cwd", value: s.cwd)]
-            let link = s.inPanel
-                ? "\(scheme)://codehatch.codehatch-helper/panel?" + (panel.percentEncodedQuery ?? "")
-                : "\(scheme)://codehatch.codehatch-helper/focus?pids=" + chain.map(String.init).joined(separator: ",")
-            for delay in [0.35, 1.0] { Thread.sleep(forTimeInterval: delay); run(["-g", link]) }
+            _ = self.goTo(s, app: app, chain: chain)
         }
+    }
+
+    /// Take you to an open session in the app it runs in: the exact Terminal or iTerm2 tab, or the editor window and its
+    /// terminal. Says what it did, for the tests.
+    @discardableResult func goTo(_ s: Session, app: String, chain: [Int32]) -> String {
+        let name = ((app as NSString).lastPathComponent as NSString).deletingPathExtension
+        // Editors that open folders, and the link prefix each one answers to.
+        let editors = AppDelegate.editorSchemes
+        func run(_ args: [String]) {
+            let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/open"); p.arguments = args
+            do { try p.run(); p.waitUntilExit(); dbg("go: open \(args.last ?? "") exited \(p.terminationStatus)") } catch { dbg("go: open failed \(error)") }
+        }
+        if let kind = Terminals.kind(app) {
+            UserDefaults.standard.set(app, forKey: "lastEditorApp"); UserDefaults.standard.set(kind, forKey: "lastEditorScheme")
+            // The exact tab, by the terminal device the session runs on; failing that, just the app.
+            if let tty = Terminals.tty(of: s.pid), Terminals.focus(kind, tty: tty) { return "tab \(kind)" }
+            run(["-a", app]); return "app \(kind)"
+        }
+        guard let scheme = editors[name] else { run(["-a", app]); return "app" }
+        UserDefaults.standard.set(app, forKey: "lastEditorApp"); UserDefaults.standard.set(scheme, forKey: "lastEditorScheme")
+        // Bring forward the window the session is in, by opening the folder that window itself has open: the editor
+        // then raises that window. The session's own folder is not used: a session started in a subfolder, or in a
+        // folder no window has open, would get a new window of its own. The window is found by the helper's note
+        // of each window's terminals (or, for the chat panel, its folders). Not found: just the editor, as it is.
+        let wins = Helper.windows()
+        let win = wins.first { !Set($0.shells).isDisjoint(with: chain) }
+            ?? (s.inPanel ? wins.first { $0.folders.contains { s.cwd == $0 || s.cwd.hasPrefix($0 + "/") } } : nil)
+        // Not found (a window still running an older helper, which notes nothing, until it is reloaded): open the
+        // session's own folder, as before. That brings back the right window whenever the session was started at the
+        // top of the window's project, which is the usual case, so this is never worse than before.
+        let folder = win?.folders.first ?? s.cwd
+        run(["-a", app, folder])
+        dbg("go: window \(win == nil ? "not found" : "found") among \(wins.count)")
+        // Then ask the helper inside it to show the terminal tab this session is running in, once the editor is in
+        // front, so the link reaches that window. Sent once: until "Don't ask again" is ticked, the editor asks
+        // about every link.
+        // A session in the extension's chat panel has no terminal tab: ask the helper to bring the panel forward.
+        var panel = URLComponents(); panel.queryItems = [URLQueryItem(name: "cwd", value: s.cwd)]
+        let link = s.inPanel
+            ? "\(scheme)://codehatch.codehatch-helper/panel?" + (panel.percentEncodedQuery ?? "")
+            : "\(scheme)://codehatch.codehatch-helper/focus?pids=" + chain.map(String.init).joined(separator: ",")
+        for _ in 0..<15 where NSWorkspace.shared.frontmostApplication?.bundleURL?.path != app { Thread.sleep(forTimeInterval: 0.1) }
+        Thread.sleep(forTimeInterval: 0.25)
+        run(["-g", link])
+        return win == nil ? "folder \(folder)" : "window \(folder)"
     }
 
     var hotKeyHandler = false
