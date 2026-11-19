@@ -1531,7 +1531,8 @@ struct RootView: View {
     /// Whether a repo's fold inside "Recently closed" is open. Folded to begin with; while you search, the repos with
     /// matches are open so the results can be seen. Either way a click on the fold's heading flips it.
     func closedFoldOpen(_ name: String) -> Bool { model.query.isEmpty ? openClosed.contains(name) : !shutInSearch.contains(name) }
-    @State private var detailId: String?              // the session shown in the detail pane: the last one pointed at
+    @State private var detailId: String?              // the session shown in the detail pane: the one last clicked
+    @State private var paneShown = false              // whether the window is wide enough to show the detail pane
     @AppStorage("widgetGroup") private var groupBy = "state"    // repo | state
     @AppStorage("widgetLayout") private var layout = "cards"    // list | cards
     @AppStorage("widgetFilter") private var filter = "all"     // all | active
@@ -1616,6 +1617,8 @@ struct RootView: View {
                         detailPane.frame(width: 380)
                     }
                 }
+                .onAppear { paneShown = wide }
+                .onChange(of: wide) { _, now in paneShown = now }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -1793,13 +1796,15 @@ struct RootView: View {
         .padding(.leading, 12).padding(.trailing, 16).padding(.vertical, table ? 7.5 : 6.5)
         // The session whose terminal is in front is highlighted, the same way as in the notch panel.
         // The session whose terminal is in front is highlighted, the same way as in the notch panel.
-        .background(ink.opacity(s.id == model.currentId ? 0.11 : hovered == s.id ? 0.07 : detailId == s.id ? 0.04 : 0))
+        .background(ink.opacity(s.id == model.currentId ? 0.11 : picked(s) ? 0.09 : hovered == s.id ? 0.05 : 0))
+        .overlay(alignment: .leading) { if picked(s) { Rectangle().fill(ink.opacity(0.5)).frame(width: 2) } }
         .contentShape(Rectangle())
         .onHover { inside in
-            if inside { hovered = s.id; detailId = s.id; NSCursor.pointingHand.set() } else if hovered == s.id { hovered = nil; confirmClose = nil; NSCursor.arrow.set() }
+            if inside { hovered = s.id; NSCursor.pointingHand.set() } else if hovered == s.id { hovered = nil; confirmClose = nil; NSCursor.arrow.set() }
         }
         .modifier(PointerLink())
-        .onTapGesture { app?.go(s) }
+        .onTapGesture(count: 2) { app?.go(s) }
+        .onTapGesture { pick(s) }
         .contextMenu { rowMenu(s) }
     }
 
@@ -1832,16 +1837,22 @@ struct RootView: View {
                 .lineLimit(2).multilineTextAlignment(.leading).frame(maxWidth: .infinity, minHeight: 30, alignment: .topLeading)
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(ink.opacity(here ? 0.12 : hovered == s.id ? 0.08 : 0.045)))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(ink.opacity(here ? 0.22 : 0.08), lineWidth: 0.5))
+        .background(RoundedRectangle(cornerRadius: 10).fill(ink.opacity(here ? 0.12 : picked(s) ? 0.1 : hovered == s.id ? 0.07 : 0.045)))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(ink.opacity(picked(s) ? 0.55 : here ? 0.22 : 0.08), lineWidth: picked(s) ? 1 : 0.5))
         .contentShape(RoundedRectangle(cornerRadius: 10))
         .onHover { inside in
-            if inside { hovered = s.id; detailId = s.id; NSCursor.pointingHand.set() } else if hovered == s.id { hovered = nil; confirmClose = nil; NSCursor.arrow.set() }
+            if inside { hovered = s.id; NSCursor.pointingHand.set() } else if hovered == s.id { hovered = nil; confirmClose = nil; NSCursor.arrow.set() }
         }
         .modifier(PointerLink())
-        .onTapGesture { app?.go(s) }
+        .onTapGesture(count: 2) { app?.go(s) }
+        .onTapGesture { pick(s) }
         .contextMenu { rowMenu(s) }
     }
+
+    /// A click picks a session: its details show in the pane on the right, and "Go to session" (or a double-click, or
+    /// Return) takes you there. When the window is too narrow for the pane, a click goes straight there.
+    func pick(_ s: Session) { if paneShown { detailId = s.id } else { app?.go(s) } }
+    func picked(_ s: Session) -> Bool { paneShown && detailId == s.id }
 
     @ViewBuilder func rowMenu(_ s: Session) -> some View {
         Button("Rename…") { app?.rename(s) }
@@ -1953,6 +1964,7 @@ struct RootView: View {
                     if s.recap == nil && s.lastAsked == nil { detailBlock("Where it is", s.empty ? "Nothing has been asked in this session yet." : "No recap saved for this session yet.") }
                     HStack(spacing: 8) {
                         action(s.status == "closed" ? "Resume" : "Go to session", primary: true) { app?.go(s) }
+                            .keyboardShortcut(.defaultAction)
                         action("Rename") { app?.rename(s) }
                     }
                     .padding(.top, 22)
