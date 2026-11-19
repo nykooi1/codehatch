@@ -6,3 +6,12 @@ node_modules/
 xcuserdata/
 DerivedData/
 __pycache__/
+
+# Signing material never goes in the repository: it lives in your keychain.
+*.p12
+*.cer
+*.p8
+*.mobileprovision
+.env
+.env.*
+sparkle-private-key*
