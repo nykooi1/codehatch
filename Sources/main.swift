@@ -1526,7 +1526,6 @@ struct RootView: View {
     var lav: Color { lightLook ? Color(red: 0.80, green: 0.42, blue: 0.02) : PortalMark.amber }
     var grn: Color { lightLook ? Color(red: 0.10, green: 0.58, blue: 0.32) : PortalMark.done }
     @FocusState private var searchFocused: Bool
-    @State private var hovered: String?
     @State private var settled = false                // true a moment after the window first appears; nothing animates before
     @AppStorage("showLastMessage") private var showLast = true
     @AppStorage("notchOrder") private var notchOrder = "recent"
@@ -1768,7 +1767,8 @@ struct RootView: View {
     func sessionRow(_ s: Session, table: Bool) -> some View {
         let old = s.rank >= 3 && s.seconds >= 86_400   // idle since yesterday or earlier: shown quieter
         let repo = groupBy == "state" || s.status == "closed" ? s.project : ""
-        return HStack(spacing: 12) {
+        return Hovering(onLeave: { if confirmClose == s.id { confirmClose = nil } }) { hovering in
+        HStack(spacing: 12) {
             orb(s).frame(width: 12, height: 12).padding(.trailing, -3)
             if table {
                 Text(s.title).font(.system(size: 13, weight: .medium)).foregroundStyle(ink.opacity(old ? 0.62 : 0.96))
@@ -1805,23 +1805,21 @@ struct RootView: View {
                 }
                 Spacer(minLength: 0)
             }
-            closeControl(s)
+            closeControl(s, hovering: hovering)
         }
         .padding(.leading, 12).padding(.trailing, 16).padding(.vertical, table ? 7.5 : 6.5)
         // The session whose terminal is in front is highlighted, the same way as in the notch panel.
         // The session whose terminal is in front is highlighted, the same way as in the notch panel.
-        .background(ink.opacity(s.id == model.currentId ? 0.11 : picked(s) ? 0.09 : hovered == s.id ? 0.05 : 0))
+        .background(ink.opacity(s.id == model.currentId ? 0.11 : picked(s) ? 0.09 : hovering ? 0.05 : 0))
         .overlay(alignment: .leading) { if picked(s) { Rectangle().fill(ink.opacity(0.5)).frame(width: 2) } }
         .contentShape(Rectangle())
-        .onHover { inside in
-            if inside { hovered = s.id; NSCursor.pointingHand.set() } else if hovered == s.id { hovered = nil; confirmClose = nil; NSCursor.arrow.set() }
-        }
         .modifier(PointerLink())
         // The single click acts at once. Listening for a double click the usual way made every single click wait
         // to see whether a second was coming, which felt like lag; here both are heard, independently.
         .onTapGesture { pick(s) }
         .simultaneousGesture(TapGesture(count: 2).onEnded { app?.go(s) })
         .contextMenu { rowMenu(s) }
+        }
     }
 
     /// One session as a card: its state on top, its name, where it is, and the last thing said in it.
@@ -1829,13 +1827,14 @@ struct RootView: View {
         let old = s.rank >= 3 && s.seconds >= 86_400
         let repo = groupBy == "state" || s.status == "closed" ? s.project : ""
         let here = s.id == model.currentId
-        return VStack(alignment: .leading, spacing: 6) {
+        return Hovering(onLeave: { if confirmClose == s.id { confirmClose = nil } }) { hovering in
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 7) {
                 if s.rank < 3 && s.status != "closed" { orb(s).frame(width: 12, height: 12) }
                 Text(stateWord(s)).font(.system(size: 11.5, weight: .medium)).foregroundStyle(stateColor(s))
                 Text(s.age).font(.system(size: 11.5)).monospacedDigit().foregroundStyle(ink.opacity(0.38))
                 Spacer(minLength: 0)
-                closeControl(s)
+                closeControl(s, hovering: hovering)
             }
             .frame(height: 16)
             Text(s.title).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(ink.opacity(old ? 0.62 : 0.96))
@@ -1853,18 +1852,16 @@ struct RootView: View {
                 .lineLimit(2).multilineTextAlignment(.leading).frame(maxWidth: .infinity, minHeight: 30, alignment: .topLeading)
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(ink.opacity(here ? 0.12 : picked(s) ? 0.1 : hovered == s.id ? 0.07 : 0.045)))
+        .background(RoundedRectangle(cornerRadius: 10).fill(ink.opacity(here ? 0.12 : picked(s) ? 0.1 : hovering ? 0.07 : 0.045)))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(ink.opacity(picked(s) ? 0.55 : here ? 0.22 : 0.08), lineWidth: picked(s) ? 1 : 0.5))
         .contentShape(RoundedRectangle(cornerRadius: 10))
-        .onHover { inside in
-            if inside { hovered = s.id; NSCursor.pointingHand.set() } else if hovered == s.id { hovered = nil; confirmClose = nil; NSCursor.arrow.set() }
-        }
         .modifier(PointerLink())
         // The single click acts at once. Listening for a double click the usual way made every single click wait
         // to see whether a second was coming, which felt like lag; here both are heard, independently.
         .onTapGesture { pick(s) }
         .simultaneousGesture(TapGesture(count: 2).onEnded { app?.go(s) })
         .contextMenu { rowMenu(s) }
+        }
     }
 
     /// A click picks a session: its details show in the pane on the right, and "Go to session" (or a double-click, or
@@ -1923,20 +1920,20 @@ struct RootView: View {
         .padding(.top, 20)
     }
     /// The x on a row. A session that is working or waiting on you asks once more before it closes.
-    func closeControl(_ s: Session) -> some View {
+    func closeControl(_ s: Session, hovering: Bool = false) -> some View {
         // Always the same size whether the x is showing or not, so pointing at a row cannot change the row's height.
         ZStack(alignment: .trailing) {
             Color.clear.frame(width: 18, height: 14)
-            closeButton(s).frame(height: 14)
+            closeButton(s, hovering: hovering).frame(height: 14)
         }
     }
-    @ViewBuilder func closeButton(_ s: Session) -> some View {
+    @ViewBuilder func closeButton(_ s: Session, hovering: Bool = false) -> some View {
         if confirmClose == s.id {
             Text("Close?").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Color(red: 1, green: 0.5, blue: 0.47))
                 .padding(.horizontal, 7).padding(.vertical, 2.5).background(Capsule().fill(Color(red: 1, green: 0.35, blue: 0.3).opacity(0.18)))
                 .contentShape(Rectangle()).modifier(PointerLink())
                 .onTapGesture { confirmClose = nil; app?.end(s) }
-        } else if (hovered == s.id || Self.showX) && s.status != "closed" {
+        } else if (hovering || Self.showX) && s.status != "closed" {
             // A bare x, as on a Mac tab: it only gets a backing when the pointer is on the x itself.
             Image(systemName: "xmark").font(.system(size: 9.5, weight: .medium)).foregroundStyle(ink.opacity(overX == s.id ? 0.95 : 0.5))
                 .frame(width: 18, height: 18).background(RoundedRectangle(cornerRadius: 5).fill(ink.opacity(overX == s.id ? 0.14 : 0)))
@@ -2191,6 +2188,7 @@ struct RootView: View {
     }
 
     func row(_ s: Session, selected: Bool, showRepo: Bool = false) -> some View {
+        Hovering(onLeave: { if confirmClose == s.id { confirmClose = nil } }) { hovering in
         HStack(alignment: .top, spacing: 8) {
             Group {
                 if s.rank == 2 { Orb(tint: PortalMark.working, light: lightLook) }
@@ -2221,20 +2219,18 @@ struct RootView: View {
             (Text(s.statusText).foregroundColor(s.rank == 1 ? PortalMark.done : s.rank == 0 ? PortalMark.amber : ink.opacity(s.rank == 2 ? 0.7 : 0.4))
              + Text("  " + s.age).foregroundColor(ink.opacity(0.4)))
                 .font(.system(size: 11)).monospacedDigit().fixedSize().padding(.top, 2.5)
-            closeControl(s)
+            closeControl(s, hovering: hovering)
         }
         .padding(.leading, 8).padding(.trailing, 12).padding(.vertical, 7)
-        .background(RoundedRectangle(cornerRadius: 8).fill(ink.opacity(selected ? 0.11 : hovered == s.id ? 0.06 : 0)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(ink.opacity(selected ? 0.11 : hovering ? 0.06 : 0)))
         .contentShape(Rectangle())
-        .onHover { inside in
-            if inside { hovered = s.id; NSCursor.pointingHand.set() } else if hovered == s.id { hovered = nil; confirmClose = nil; NSCursor.arrow.set() }
-        }
         .modifier(PointerLink())
         .onTapGesture { dbg("row clicked: \(s.title)"); app?.go(s) }
         .contextMenu {
             Button("Rename…") { app?.rename(s) }
             if s.status == "closed" { Button("Copy Resume Command") { copyResume(s) } }
             Button("Show folder in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: s.cwd) }
+        }
         }
     }
 }
@@ -2427,6 +2423,21 @@ struct OutOfNotch: ViewModifier, Animatable {
                 }
             }
             .opacity(notch > 0 ? 1 : Double(min(1, shown * 1.5)))   // without a notch to come out of, it also fades
+    }
+}
+
+/// Knows, by itself, whether the pointer is over it. Keeping this inside each row means the pointer moving across the list
+/// redraws only the two rows it left and entered; kept in the window, every move redrew the whole list, which made the
+/// hover highlight lag behind the pointer.
+struct Hovering<Content: View>: View {
+    var onLeave: () -> Void = {}
+    @ViewBuilder let content: (Bool) -> Content
+    @State private var inside = false
+    var body: some View {
+        content(inside).onHover { now in
+            inside = now
+            if now { NSCursor.pointingHand.set() } else { NSCursor.arrow.set(); onLeave() }
+        }
     }
 }
 
