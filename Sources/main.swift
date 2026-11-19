@@ -2456,7 +2456,9 @@ struct HoverTracker: NSViewRepresentable {
         override func updateTrackingAreas() {
             super.updateTrackingAreas()
             if let area { removeTrackingArea(area) }
-            let a = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self, userInfo: nil)
+            // The row's whole area, not just the part visible when this was last worked out: the notch panel grows open
+            // from nothing, so rows near its bottom were measured while still hidden and kept an empty area afterwards.
+            let a = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways], owner: self, userInfo: nil)
             addTrackingArea(a); area = a
         }
         override func mouseEntered(with event: NSEvent) { changed(true) }
