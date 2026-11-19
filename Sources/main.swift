@@ -1336,8 +1336,8 @@ enum Demo {
     static var hidden = Set<String>()
     //                 id, repo, title, status, seconds ago, branch, last message, recap, waiting for
     static let rows: [(String, String, String, String, Double, String, String, String, String?)] = [
-        ("d1", "storefront", "Checkout fails for saved cards", "waiting", 40, "fix/saved-card-checkout", "go ahead and run the migration", "Found the cause: the saved-card token is read before it is refreshed. The fix is written and tested; it needs your OK to run the database migration.", "permission"),
-        ("d2", "storefront", "Speed up the product search page", "busy", 134, "perf/search-page", "try caching the facet counts", "Measuring the search page. The facet counts are the slow part; trying a cache for them now.", nil),
+        ("d2", "storefront", "Speed up the product search page", "waiting", 40, "perf/search-page", "try caching the facet counts", "The facet counts were the slow part. A cache for them is written and the page loads in a third of the time; it needs your OK to run the benchmark.", "permission"),
+        ("d1", "storefront", "Checkout fails for saved cards", "busy", 134, "fix/saved-card-checkout", "go ahead and run the migration", "Found the cause: the saved-card token is read before it is refreshed. Running the database migration now.", nil),
         ("d3", "storefront", "Holiday banner and countdown", "idle", 190, "feature/holiday-banner", "looks good, make the countdown end at midnight local time", "The banner and countdown are done and match the design. Next: you review it on a phone-sized screen.", nil),
         ("d4", "ios-app", "Push notifications arrive twice", "busy", 61, "bugfix/duplicate-push", "check whether both the old and new token are registered", "Reproduced the duplicate. Checking whether the device is registered under two tokens.", nil),
         ("d5", "ios-app", "Onboarding screens redesign", "idle", 3_100, "feature/onboarding-v2", "use the larger illustration on the second screen", "Three of the four screens are rebuilt. The last one is waiting on the final copy.", nil),
@@ -2939,7 +2939,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let s = Labels.apply(Demo.sessions())
             model.sessions = s; model.recent = Prefs.bool("showRecent") ? Labels.apply(Demo.closed()) : []
             // The session you are in: the last sample session you went to, or to begin with the one working on search.
-            model.currentId = s.first { $0.id == (Demo.here ?? "d2") }?.id
+            model.currentId = Demo.here.flatMap { h in s.first { $0.id == h }?.id }   // none until you open one
             if model.open && !movedSelection && model.query.isEmpty { model.selected = model.filtered.firstIndex { $0.id == model.currentId } ?? -1 }
             return
         }
@@ -3237,7 +3237,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         widget = w
         var still = Transaction(); still.disablesAnimations = true
         withTransaction(still) { host.layoutSubtreeIfNeeded() }
-        w.orderFrontRegardless()
+        // Focused as it opens, like any window you ask for; only put in front, the first click on it went to focusing it.
+        NSApp.activate(ignoringOtherApps: true)
+        w.makeKeyAndOrderFront(nil)
     }
 
     func key(_ e: NSEvent) -> Bool {
