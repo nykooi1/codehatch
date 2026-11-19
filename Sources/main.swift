@@ -550,6 +550,8 @@ final class Model: ObservableObject {
     }
     @Published var currentId: String?   // the session you are in, when the editor helper can tell us
     @Published var notchWidth: CGFloat = 0
+    /// The notch's own height, which can be a point less than the menu bar's (33 against 34 here).
+    @Published var notchHeight: CGFloat = 0
     @Published var barHeight: CGFloat = 26
 
     /// Sessions matching the search, most recent activity first, not grouped.
@@ -1805,7 +1807,6 @@ struct RootView: View {
                 }
                 Spacer(minLength: 0)
             }
-            closeControl(s, hovering: hovering)
         }
         .padding(.leading, 12).padding(.trailing, 16).padding(.vertical, table ? 7.5 : 6.5)
         // The session whose terminal is in front is highlighted, the same way as in the notch panel.
@@ -1834,7 +1835,6 @@ struct RootView: View {
                 Text(stateWord(s)).font(.system(size: 11.5, weight: .medium)).foregroundStyle(stateColor(s))
                 Text(s.age).font(.system(size: 11.5)).monospacedDigit().foregroundStyle(ink.opacity(0.38))
                 Spacer(minLength: 0)
-                closeControl(s, hovering: hovering)
             }
             .frame(height: 16)
             Text(s.title).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(ink.opacity(old ? 0.62 : 0.96))
@@ -1873,6 +1873,7 @@ struct RootView: View {
         Button("Rename…") { app?.rename(s) }
         if s.status == "closed" { Button("Copy Resume Command") { copyResume(s) } }
         Button("Show folder in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: s.cwd) }
+        if s.status != "closed" { Divider(); Button("Close Session…") { app?.askToEnd(s) } }
     }
     func copyResume(_ s: Session) {
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(s.resumeCommand, forType: .string)
@@ -1920,28 +1921,6 @@ struct RootView: View {
         .padding(.top, 20)
     }
     /// The x on a row. A session that is working or waiting on you asks once more before it closes.
-    func closeControl(_ s: Session, hovering: Bool = false) -> some View {
-        // Always the same size whether the x is showing or not, so pointing at a row cannot change the row's height.
-        ZStack(alignment: .trailing) {
-            Color.clear.frame(width: 18, height: 14)
-            closeButton(s, hovering: hovering).frame(height: 14)
-        }
-    }
-    @ViewBuilder func closeButton(_ s: Session, hovering: Bool = false) -> some View {
-        if confirmClose == s.id {
-            Text("Close?").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Color(red: 1, green: 0.5, blue: 0.47))
-                .padding(.horizontal, 7).padding(.vertical, 2.5).background(Capsule().fill(Color(red: 1, green: 0.35, blue: 0.3).opacity(0.18)))
-                .contentShape(Rectangle())
-                .onTapGesture { confirmClose = nil; app?.end(s) }
-        } else if (hovering || Self.showX) && s.status != "closed" {
-            // A bare x, as on a Mac tab: it only gets a backing when the pointer is on the x itself.
-            Image(systemName: "xmark").font(.system(size: 9.5, weight: .medium)).foregroundStyle(ink.opacity(overX == s.id ? 0.95 : 0.5))
-                .frame(width: 18, height: 18).background(RoundedRectangle(cornerRadius: 5).fill(ink.opacity(overX == s.id ? 0.14 : 0)))
-                .contentShape(Rectangle()).help("Close this session")
-                .onHover { overX = $0 ? s.id : (overX == s.id ? nil : overX) }
-                .onTapGesture { if confirmBusy && (s.rank == 0 || s.rank == 2) { confirmClose = s.id } else { app?.end(s) } }
-        }
-    }
     /// Shown for a few seconds after a close.
     @ViewBuilder var closedToast: some View {
         if let c = model.closed {
@@ -2008,7 +1987,9 @@ struct RootView: View {
         // Closed, the shape is exactly the notch: its width and the menu bar's height. On a Mac with no notch it is a
         // strip of no height at the top centre of the screen.
         let closedW: CGFloat = model.notchWidth > 0 ? model.notchWidth : 160
-        let closedH: CGFloat = model.notchWidth > 0 ? model.barHeight : 0
+        // The notch's own height, not the menu bar's: the menu bar can be a point taller, and that point showed as a sliver
+        // of black under the notch at the end of closing, just before the panel left the screen, like a bounce.
+        let closedH: CGFloat = model.notchWidth > 0 ? (model.notchHeight > 0 ? model.notchHeight : model.barHeight) : 0
         VStack(spacing: 0) {
             pill.frame(height: model.barHeight)
             list.padding(.horizontal, 8)   // clear of the shape's sides, which sit a little in from the top corners
@@ -2219,9 +2200,8 @@ struct RootView: View {
             (Text(s.statusText).foregroundColor(s.rank == 1 ? PortalMark.done : s.rank == 0 ? PortalMark.amber : ink.opacity(s.rank == 2 ? 0.7 : 0.4))
              + Text("  " + s.age).foregroundColor(ink.opacity(0.4)))
                 .font(.system(size: 11)).monospacedDigit().fixedSize().padding(.top, 2.5)
-            closeControl(s, hovering: hovering)
         }
-        .padding(.leading, 8).padding(.trailing, 12).padding(.vertical, 7)
+        .padding(.leading, 8).padding(.trailing, 10).padding(.vertical, 7)
         .background(RoundedRectangle(cornerRadius: 8).fill(ink.opacity(selected ? 0.11 : hovering ? 0.06 : 0)))
         .contentShape(Rectangle())
         
@@ -2230,6 +2210,7 @@ struct RootView: View {
             Button("Rename…") { app?.rename(s) }
             if s.status == "closed" { Button("Copy Resume Command") { copyResume(s) } }
             Button("Show folder in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: s.cwd) }
+            if s.status != "closed" { Divider(); Button("Close Session…") { app?.askToEnd(s) } }
         }
         }
     }
@@ -2426,7 +2407,7 @@ struct OutOfNotch: ViewModifier, Animatable {
 /// highlight lagged one movement behind, or waited for a nudge of the mouse. Pointer movements reach codehatch
 /// promptly through its event monitors, which is what the notch itself already relies on.
 final class PointerTracker: ObservableObject {
-    static let panel = PointerTracker(), window = PointerTracker()
+    static let panel = PointerTracker(), window = PointerTracker(), menu = PointerTracker()
     @Published private(set) var over: String?
     private var places: [String: CGRect] = [:]
     func place(_ id: String, _ rect: CGRect) { places[id] = rect }
@@ -2437,6 +2418,42 @@ final class PointerTracker: ObservableObject {
         if now != over {
             over = now
             if UserDefaults.standard.bool(forKey: "debugHover") { dbg(String(format: "pointer over %@ %.3f", now ?? "nothing", Date().timeIntervalSince1970)) }
+        }
+    }
+}
+
+/// The panel under the menu bar icon: the same five choices a menu would have, drawn by codehatch.
+struct MenuPanel: View {
+    weak var app: AppDelegate?
+    @Environment(\.colorScheme) private var scheme
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            item("sessions", "Show sessions")
+            item("window", "Open the window")
+            Divider().padding(.horizontal, 12).padding(.vertical, 5)
+            item("settings", "Settings…", key: "⌘,")
+            item("updates", "Check for updates…")
+            Divider().padding(.horizontal, 12).padding(.vertical, 5)
+            item("quit", "Quit codehatch", key: "⌘Q")
+        }
+        .padding(6)
+        .frame(width: 240, height: 182, alignment: .top)
+        // Darker than a plain blur, to match the system's own menu bar panels (Wi-Fi, Battery) beside it.
+        .background(ZStack { PanelBlur(light: scheme == .light); (scheme == .light ? Color.white.opacity(0.35) : Color.black.opacity(0.38)) })
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
+    }
+    func item(_ id: String, _ title: String, key: String = "") -> some View {
+        Hovering(id: id) { over in
+            HStack {
+                Text(title).font(.system(size: 13))
+                Spacer()
+                if !key.isEmpty { Text(key).font(.system(size: 12)).foregroundStyle(.secondary) }
+            }
+            .padding(.horizontal, 10).frame(height: 28)
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.primary.opacity(over ? 0.1 : 0)))
+            .contentShape(Rectangle())
+            .onTapGesture { app?.menuChose(id) }
         }
     }
 }
@@ -2736,8 +2753,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if CommandLine.arguments.contains("--hold") { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.peeking = true; self.open(byHover: true) } }
         if CommandLine.arguments.contains("--widget") { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.toggleWidget() } }
         if CommandLine.arguments.contains("--peek") { DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.peeking = true; self.open(byHover: true); DispatchQueue.main.asyncAfter(deadline: .now() + 4) { self.peeking = false; self.close() } } }
-        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in self?.key(e) == true ? nil : e }
-        NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in if self?.model.open == true { self?.close() } }
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
+            if let self, self.menuPanel?.isVisible == true, Int(e.keyCode) == kVK_Escape { self.closeMenuPanel(); return nil }
+            return self?.key(e) == true ? nil : e
+        }
+        // A click in one of codehatch's own windows, outside the menu bar panel, closes it too.
+        NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] e in
+            if let self, let p = self.menuPanel, p.isVisible, e.window !== p, e.window !== self.statusItem?.button?.window { self.closeMenuPanel() }
+            return e
+        }
+        NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            if self?.model.open == true { self?.close() }
+            if self?.menuPanel?.isVisible == true { self?.closeMenuPanel() }   // a click in another app
+        }
         refresh()
         Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.tick() }
         watch()
@@ -2764,6 +2792,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         PointerTracker.panel.pointer(at: model.open ? inside(panel) : nil)
         PointerTracker.window.pointer(at: inside(widget))
+        PointerTracker.menu.pointer(at: inside(menuPanel))
         // The cursor: an I-beam over a text field, the arrow everywhere else. macOS only keeps the cursor up to date for
         // the app in front, so in codehatch the I-beam from the search field stayed on over buttons and icons.
         for w in [model.open ? panel : nil, widget].compactMap({ $0 }) where w.isVisible && w.frame.contains(m) {
@@ -2944,19 +2973,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             item.button?.image = mark
         } else { item.button?.title = "ch" }
         item.button?.toolTip = "codehatch"
-        let menu = NSMenu()
-        func add(_ title: String, _ action: Selector, _ key: String = "") { let i = NSMenuItem(title: title, action: action, keyEquivalent: key); i.target = self; menu.addItem(i) }
-        add("Show sessions", #selector(menuShowPanel))
-        add("Open the window", #selector(menuToggleWindow))
-        menu.addItem(.separator())
-        add("Settings…", #selector(openSettingsFromMenu), ",")
-        add("Check for updates…", #selector(menuCheckUpdates))
-        menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit codehatch", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-        item.menu = menu
+        // Clicking it opens a small panel of our own, like Wi-Fi's and Sound's, rather than a classic menu: on macOS 26
+        // a classic menu bar menu draws its highlight late (a known Apple bug, see the Apple developer forums thread
+        // "Incorrect menu consistency warnings logged in Tahoe for NSStatusItem").
+        item.button?.target = self
+        item.button?.action = #selector(toggleMenuPanel)
         statusItem = item
     }
     @objc func menuShowPanel() { DispatchQueue.main.async { self.open(byHover: false) } }
+    var menuPanel: NSPanel?
+    @objc func toggleMenuPanel() {
+        if let p = menuPanel, p.isVisible { closeMenuPanel(); return }
+        guard let button = statusItem?.button, let bw = button.window else { return }
+        let size = NSSize(width: 240, height: 182)
+        let p = menuPanel ?? {
+            let p = KeyPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            p.isOpaque = false; p.backgroundColor = NSColor(white: 0, alpha: 0.001); p.hasShadow = true
+            p.level = .popUpMenu
+            p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
+            p.acceptsMouseMovedEvents = true   // so pointer movements over it reach codehatch, for the hover
+            p.contentView = FirstClickHost(rootView: AnyView(MenuPanel(app: self).environmentObject(PointerTracker.menu)))
+            menuPanel = p
+            return p
+        }()
+        let screen = bw.screen ?? NSScreen.main ?? self.screen
+        var x = bw.frame.minX - 6
+        x = min(max(x, screen.visibleFrame.minX + 6), screen.visibleFrame.maxX - size.width - 6)
+        p.setFrame(NSRect(x: x, y: bw.frame.minY - size.height - 6, width: size.width, height: size.height), display: true)
+        p.makeKeyAndOrderFront(nil)
+        button.highlight(true)
+    }
+    func closeMenuPanel() {
+        menuPanel?.orderOut(nil)
+        statusItem?.button?.highlight(false)
+        PointerTracker.menu.pointer(at: nil)
+    }
+    /// A choice in the menu bar panel: close the panel, then do it.
+    func menuChose(_ what: String) {
+        closeMenuPanel()
+        switch what {
+        case "sessions": menuShowPanel()
+        case "window": toggleWidget()
+        case "settings": showSettings()
+        case "updates": updater.checkForUpdates(nil)
+        case "quit": NSApp.terminate(nil)
+        default: break
+        }
+    }
     @objc func menuToggleWindow() { toggleWidget() }
     @objc func menuCheckUpdates() { updater.checkForUpdates(nil) }
     var beacon: NSPanel!
@@ -3005,6 +3068,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var notch: CGFloat = 0
         if let l = screen.auxiliaryTopLeftArea, let r = screen.auxiliaryTopRightArea { notch = max(0, screen.frame.width - l.width - r.width) }
         model.barHeight = bar; model.notchWidth = notch
+        model.notchHeight = screen.safeAreaInsets.top > 0 ? screen.safeAreaInsets.top : bar
         let size = NSSize(width: RootView.openWidth, height: RootView.openHeight)
         panel.setFrame(NSRect(x: screen.frame.midX - size.width / 2, y: screen.frame.maxY - size.height, width: size.width, height: size.height), display: true)
     }
@@ -3106,6 +3170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         applyWindowLook(to: w)
         w.isOpaque = false; w.backgroundColor = NSColor(white: 0, alpha: 0.001)   // not .clear: see the panel's note on hover
         w.isMovableByWindowBackground = true
+        w.acceptsMouseMovedEvents = true   // pointer movements over it reach codehatch, for the hover
         w.isReleasedWhenClosed = false
         w.level = Prefs.bool("widgetOnTop") ? .floating : .normal
         w.collectionBehavior = [.fullScreenPrimary]
@@ -3161,6 +3226,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         refresh()
     }
     /// Close a session from the panel or the window.
+    /// Close a session from a right-click. A session that is working or waiting on you is closed only after asking, if
+    /// that setting is on (it is by default); anything else closes straight away.
+    func askToEnd(_ s: Session) {
+        if Prefs.bool("confirmClose"), s.rank == 0 || s.rank == 2 {
+            close()
+            let alert = NSAlert()
+            alert.messageText = "Close “\(s.title)”?"
+            alert.informativeText = s.rank == 2 ? "It is still working. Closing it stops it, and closes the terminal it runs in." : "It is waiting on you. Closing it stops it, and closes the terminal it runs in."
+            alert.addButton(withTitle: "Close Session"); alert.addButton(withTitle: "Cancel")
+            NSApp.activate(ignoringOtherApps: true)
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        end(s)
+    }
     func end(_ s: Session) {
         if Demo.on {   // a sample session just leaves the list
             Demo.hidden.insert(s.id)
