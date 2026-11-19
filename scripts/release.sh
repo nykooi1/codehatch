@@ -85,3 +85,4 @@ cat > "$OUT/appcast.xml" <<XML
 </rss>
 XML
 echo "made $ZIP and $OUT/appcast.xml (version $VERSION, build $BUILD)"
+scripts/make-dmg.sh "$VERSION"
