@@ -10,7 +10,7 @@ the last thing said in it. Click one and you are on its exact terminal tab.
 
 Close a session, or restart your Mac, and it is still in the list, ready to resume where you left it.
 
-![The codehatch panel open under a MacBook's notch](docs/images/notch-panel.jpg)
+![codehatch on a Mac: the panel open under the notch, over three editor windows](docs/images/screen.jpg)
 
 ## Table of Contents
 
@@ -51,9 +51,9 @@ resume it in a new terminal in the right folder.
 
 **Pop it out** into its own window, as cards or as a list, and park it on a second monitor.
 
-| Cards | List |
-| --- | --- |
-| ![The window as cards](docs/images/window-cards.jpg) | ![The window as a list](docs/images/window-list.jpg) |
+![The window as cards](docs/images/window-cards.png)
+
+![The window as a list](docs/images/window-list.png)
 
 ## Where it works
 

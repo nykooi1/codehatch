@@ -827,6 +827,11 @@ struct Beacon: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+        // Not shown at all while the panel is open: the panel already says the same thing, and macOS can briefly draw
+        // either window in front of the other (swiping between desktops, for one). It is simply back as the panel closes,
+        // with no fade or slide.
+        .opacity(model.open ? 0 : 1)
+        .transaction(value: model.open) { $0.animation = nil }
         .animation(.spring(response: 0.42, dampingFraction: 0.92), value: model.spotlight?.rank)
         .animation(.spring(response: 0.42, dampingFraction: 0.92), value: model.spotlight?.id)
     }
@@ -2826,7 +2831,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func setUpBeacon() {
         beacon = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         beacon.isOpaque = false; beacon.backgroundColor = .clear; beacon.hasShadow = false
-        beacon.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
+        // One level below the panel, so the open panel always covers it. At the same level, macOS could put either in
+        // front while redrawing, for example while swiping between desktops, and the orb showed through the panel.
+        beacon.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 2)
         beacon.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         // Only the black tab takes clicks; the clear space around it lets them through to the menu bar.
         beacon.contentView = FirstClickHost(rootView: Beacon(model: model) { [weak self] in self?.beaconClicked() })

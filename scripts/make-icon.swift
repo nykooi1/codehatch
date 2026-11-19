@@ -17,8 +17,7 @@ func draw(_ px: Int) -> Data {
     // The Mac's icon shape: a rounded square a little smaller than the canvas, so it lines up with other apps' icons.
     let box = NSRect(x: s * 0.098, y: s * 0.098, width: s * 0.804, height: s * 0.804)
     let shape = NSBezierPath(roundedRect: box, xRadius: s * 0.18, yRadius: s * 0.18)
-    NSGradient(colors: [NSColor(white: 0.16, alpha: 1), NSColor(white: 0.05, alpha: 1)])!.draw(in: shape, angle: -90)
-    NSColor(white: 1, alpha: 0.10).setStroke(); shape.lineWidth = max(1, s / 256); shape.stroke()
+    NSColor.black.setFill(); shape.fill()   // plain black: no shading, no edge
     let m = s * 0.50
     mark.draw(in: NSRect(x: (s - m) / 2, y: (s - m) / 2, width: m, height: m), from: .zero, operation: .sourceOver, fraction: 1)
     NSGraphicsContext.restoreGraphicsState()
