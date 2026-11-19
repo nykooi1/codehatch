@@ -225,9 +225,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     /// What each session file last said that the interface shows: its state, what it waits for, and its name.
     var said: [String: String] = [:]
+    /// The Codex sessions hooks have spoken about, by their file in ~/.codehatch/live.
+    var codexHeard: Set<String> = []
     /// True if this changed file means the list needs reloading.
     func matters(_ path: String) -> Bool {
-        if path.contains("/.codex/") { return codexMatters(path) }
+        // The first hook event of a Codex session is a session codehatch may not have found yet: hooks only update the
+        // Codex sessions it has found, so list the Codex programs afresh on this reload instead of using a list up to
+        // ten seconds old. Later events from the same session change nothing here.
+        if path.contains("/.codehatch/live/codex-"), !codexHeard.contains(path) {
+            codexHeard.insert(path)
+            queue.async { Codex.runningCache.at = 0 }
+        }
+        if path.contains("/.codex/") {
+            let changed = codexMatters(path)
+            // A log codehatch has not matched to a session yet is a session it may not know about, started since it
+            // last listed the Codex programs: list them afresh on this reload, rather than using a list up to ten
+            // seconds old, so a new Codex session shows up straight away even without hooks. (On the same queue as
+            // the reload, which reads these, and ahead of it.)
+            if changed { queue.async { if !Codex.logOf.values.contains(path) { Codex.runningCache.at = 0 } } }
+            return changed
+        }
         guard path.contains("/.claude/sessions/"), path.hasSuffix(".json") else { return true }   // the helper's note, or anything unexpected
         guard let data = FileManager.default.contents(atPath: path), let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return said.removeValue(forKey: path) != nil || !FileManager.default.fileExists(atPath: path)   // gone, or half-written
