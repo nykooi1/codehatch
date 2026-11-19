@@ -2764,6 +2764,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         PointerTracker.panel.pointer(at: model.open ? inside(panel) : nil)
         PointerTracker.window.pointer(at: inside(widget))
+        // The cursor: an I-beam over a text field, the arrow everywhere else. macOS only keeps the cursor up to date for
+        // the app in front, so in codehatch the I-beam from the search field stayed on over buttons and icons.
+        for w in [model.open ? panel : nil, widget].compactMap({ $0 }) where w.isVisible && w.frame.contains(m) {
+            let hit = w.contentView?.hitTest(w.convertPoint(fromScreen: m))
+            let text = hit is NSText || hit is NSTextField || hit?.superview is NSTextField
+            (text ? NSCursor.iBeam : NSCursor.arrow).set()
+        }
     }
     var hoverTimer: Timer?
     /// True while the pointer is pushed into the notch (or the top centre of a screen without one).
