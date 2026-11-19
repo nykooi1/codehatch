@@ -11,8 +11,13 @@
 # key is SUPublicEDKey in Info.plist). Lose that key and installed copies can no longer be updated, so back it up:
 #   .build/artifacts/sparkle/Sparkle/bin/generate_keys -x sparkle-private-key.txt   (keep the file somewhere safe)
 #
-# Not done here yet: signing with an Apple Developer ID and notarising. Until then a downloaded copy shows the
-# "unidentified developer" warning on first launch.
+# Signing and notarising, so a downloaded copy opens without the "unidentified developer" warning, use two things
+# kept in your keychain, never in this repository:
+#   - a "Developer ID Application" certificate (Xcode › Settings › Accounts › Manage Certificates), found by name;
+#     set CODEHATCH_SIGN_ID to choose one if there are several;
+#   - notarisation credentials saved once with:  xcrun notarytool store-credentials codehatch
+#     (CODEHATCH_NOTARY_PROFILE to use another name).
+# Without the certificate it still makes a release, signed only for this Mac, and says so.
 set -e
 cd "$(dirname "$0")/.."   # the repository root
 VERSION="$1"; NOTES="${2:-Fixes and improvements.}"
@@ -30,7 +35,35 @@ cp Info.plist "$APP/Contents/"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" -c "Set :CFBundleVersion $BUILD" -c "Set :CFBundleName codehatch" "$APP/Contents/Info.plist"
 ditto .build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework "$APP/Contents/Frameworks/Sparkle.framework"
 install_name_tool -add_rpath @executable_path/../Frameworks "$APP/Contents/MacOS/codehatch" 2>/dev/null || true
-codesign --force --deep -s - "$APP" >/dev/null 2>&1
+# Sign from the inside out, as Apple requires: Sparkle's helpers, then Sparkle, then the app. Hardened runtime on,
+# and a secure timestamp, both needed for notarisation.
+ID="${CODEHATCH_SIGN_ID:-$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -1)}"
+PROFILE="${CODEHATCH_NOTARY_PROFILE:-codehatch}"
+if [ -n "$ID" ]; then
+  echo "signing with your Developer ID certificate"
+  SP="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
+  sign() { codesign --force --timestamp --options runtime -s "$ID" "$@"; }
+  sign "$SP/XPCServices/Installer.xpc"
+  sign --preserve-metadata=entitlements "$SP/XPCServices/Downloader.xpc"
+  sign "$SP/Autoupdate"
+  sign "$SP/Updater.app"
+  sign "$APP/Contents/Frameworks/Sparkle.framework"
+  sign --entitlements codehatch.entitlements "$APP"
+  codesign --verify --deep --strict "$APP"
+  if xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; then
+    echo "sending it to Apple to be notarised (usually a few minutes)"
+    ditto -c -k --keepParent "$APP" "$OUT/notarise.zip"
+    xcrun notarytool submit "$OUT/notarise.zip" --keychain-profile "$PROFILE" --wait
+    xcrun stapler staple "$APP"   # attaches Apple's approval to the app, so it opens even offline
+    rm -f "$OUT/notarise.zip"
+    spctl --assess --type execute "$APP" && echo "notarised: macOS will open it without a warning"
+  else
+    echo "WARNING: no notarisation credentials saved as '$PROFILE'; signed but not notarised (run: xcrun notarytool store-credentials $PROFILE)"
+  fi
+else
+  echo "WARNING: no Developer ID certificate in your keychain; signed for this Mac only. Others will see a warning."
+  codesign --force --deep -s - "$APP" >/dev/null 2>&1
+fi
 ditto -c -k --keepParent "$APP" "$ZIP"
 
 SIG=$(.build/artifacts/sparkle/Sparkle/bin/sign_update "$ZIP")   # prints: sparkle:edSignature="…" length="…"

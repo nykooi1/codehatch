@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Under Apple's hardened runtime, which notarisation requires, an app may only control other apps (here Terminal
+       and iTerm2, to bring the right tab forward) if it says so. macOS still asks the person the first time. -->
+  <key>com.apple.security.automation.apple-events</key><true/>
+</dict>
+</plist>
