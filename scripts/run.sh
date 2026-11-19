@@ -12,6 +12,9 @@ APP=.build/codehatch.app
 rm -rf "$APP" && mkdir -p "$APP/Contents/MacOS"
 mkdir -p "$APP/Contents/Resources"
 cp .build/release/codehatch "$APP/Contents/MacOS/" && cp Info.plist "$APP/Contents/" && cp assets/menu-mark.png "$APP/Contents/Resources/portal.png" && cp assets/AppIcon.icns "$APP/Contents/Resources/" && cp editor-helper/codehatch-helper-*.vsix "$APP/Contents/Resources/" 2>/dev/null && cp hooks/codehatch-hook.sh "$APP/Contents/Resources/"
+# The macOS 26 icon (made in Icon Composer): compiled into Assets.car, which macOS 26 uses to draw it in its own
+# rounded shape. Without it, macOS 26 shrinks AppIcon.icns onto a white tile. Older macOS keep using AppIcon.icns.
+ICONS=$(mktemp -d) && xcrun actool assets/AppIcon.icon --compile "$ICONS" --app-icon AppIcon --platform macosx --minimum-deployment-target 14.0 --output-partial-info-plist "$ICONS/partial.plist" >/dev/null && cp "$ICONS/Assets.car" "$APP/Contents/Resources/" && rm -rf "$ICONS"
 # The updater (Sparkle) travels inside the app, and the program is told to look for it there.
 mkdir -p "$APP/Contents/Frameworks" && ditto .build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework "$APP/Contents/Frameworks/Sparkle.framework"
 install_name_tool -add_rpath @executable_path/../Frameworks "$APP/Contents/MacOS/codehatch" 2>/dev/null
