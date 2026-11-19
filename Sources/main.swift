@@ -1230,12 +1230,12 @@ enum Render {
         let light = look == "light"
         let size: CGSize, view: AnyView
         switch what {
-        case "panel": size = CGSize(width: RootView.openWidth, height: RootView.openHeight); view = AnyView(RootView(model: model, app: nil))
+        case "panel": size = CGSize(width: RootView.openWidth, height: RootView.openHeight); view = AnyView(RootView(model: model, app: nil).environmentObject(PointerTracker.panel))
         // A Mac with no notch (a desktop Mac, an external display): the panel hangs from the top centre of the screen.
-        case "panel-desktop": model.notchWidth = 0; model.barHeight = 24; size = CGSize(width: RootView.openWidth, height: RootView.openHeight); view = AnyView(RootView(model: model, app: nil))
+        case "panel-desktop": model.notchWidth = 0; model.barHeight = 24; size = CGSize(width: RootView.openWidth, height: RootView.openHeight); view = AnyView(RootView(model: model, app: nil).environmentObject(PointerTracker.panel))
         case "settings": size = CGSize(width: 520, height: 560); view = AnyView(SettingsView(app: nil))
         case "setup": size = CGSize(width: 470, height: 480); view = AnyView(SetupView(done: {}))
-        default: size = CGSize(width: 1180, height: 640); view = AnyView(RootView(model: model, app: nil, detached: true))
+        default: size = CGSize(width: 1180, height: 640); view = AnyView(RootView(model: model, app: nil, detached: true).environmentObject(PointerTracker.window))
         }
         let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height).environment(\.colorScheme, light ? .light : .dark))
         host.frame = CGRect(origin: .zero, size: size)
@@ -1767,7 +1767,7 @@ struct RootView: View {
     func sessionRow(_ s: Session, table: Bool) -> some View {
         let old = s.rank >= 3 && s.seconds >= 86_400   // idle since yesterday or earlier: shown quieter
         let repo = groupBy == "state" || s.status == "closed" ? s.project : ""
-        return Hovering(onLeave: { if confirmClose == s.id { confirmClose = nil } }) { hovering in
+        return Hovering(id: s.id, onLeave: { if confirmClose == s.id { confirmClose = nil } }) { hovering in
         HStack(spacing: 12) {
             orb(s).frame(width: 12, height: 12).padding(.trailing, -3)
             if table {
@@ -1827,7 +1827,7 @@ struct RootView: View {
         let old = s.rank >= 3 && s.seconds >= 86_400
         let repo = groupBy == "state" || s.status == "closed" ? s.project : ""
         let here = s.id == model.currentId
-        return Hovering(onLeave: { if confirmClose == s.id { confirmClose = nil } }) { hovering in
+        return Hovering(id: s.id, onLeave: { if confirmClose == s.id { confirmClose = nil } }) { hovering in
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 7) {
                 if s.rank < 3 && s.status != "closed" { orb(s).frame(width: 12, height: 12) }
@@ -2188,7 +2188,7 @@ struct RootView: View {
     }
 
     func row(_ s: Session, selected: Bool, showRepo: Bool = false) -> some View {
-        Hovering(label: s.title, onLeave: { if confirmClose == s.id { confirmClose = nil } }) { hovering in
+        Hovering(id: s.id, onLeave: { if confirmClose == s.id { confirmClose = nil } }) { hovering in
         HStack(alignment: .top, spacing: 8) {
             Group {
                 if s.rank == 2 { Orb(tint: PortalMark.working, light: lightLook) }
@@ -2420,19 +2420,42 @@ struct OutOfNotch: ViewModifier, Animatable {
     }
 }
 
-/// Knows, by itself, whether the pointer is over it. Keeping this inside each row means the pointer moving across the list
-/// redraws only the two rows it left and entered; kept in the window, every move redrew the whole list, which made the
-/// hover highlight lag behind the pointer.
+/// Which row or card the pointer is over, worked out by codehatch itself for the whole window: every row reports where
+/// it is, and every pointer movement anywhere is checked against those places. SwiftUI's own per-view hover tracking
+/// only delivers a change when the next event arrives in an app that is not in front (codehatch never is), so the
+/// highlight lagged one movement behind, or waited for a nudge of the mouse. Pointer movements reach codehatch
+/// promptly through its event monitors, which is what the notch itself already relies on.
+final class PointerTracker: ObservableObject {
+    static let panel = PointerTracker(), window = PointerTracker()
+    @Published private(set) var over: String?
+    private var places: [String: CGRect] = [:]
+    func place(_ id: String, _ rect: CGRect) { places[id] = rect }
+    func forget(_ id: String) { places[id] = nil; if over == id { over = nil } }
+    /// The pointer is at this point, in the window's content (top-left origin), or outside the window (nil).
+    func pointer(at p: CGPoint?) {
+        let now = p.flatMap { p in places.first { $0.value.contains(p) }?.key }
+        if now != over {
+            over = now
+            if UserDefaults.standard.bool(forKey: "debugHover") { dbg(String(format: "pointer over %@ %.3f", now ?? "nothing", Date().timeIntervalSince1970)) }
+        }
+    }
+}
+
+/// A row or card that is highlighted while the pointer is over it.
 struct Hovering<Content: View>: View {
-    var label = ""
+    let id: String
     var onLeave: () -> Void = {}
     @ViewBuilder let content: (Bool) -> Content
-    @State private var inside = false
+    @EnvironmentObject private var pointer: PointerTracker
     var body: some View {
-        content(inside).onHover { now in
-            inside = now
-            if !now { onLeave() }
-        }
+        content(pointer.over == id)
+            .background(GeometryReader { g in
+                Color.clear
+                    .onAppear { pointer.place(id, g.frame(in: .global)) }
+                    .onChange(of: g.frame(in: .global)) { _, r in pointer.place(id, r) }
+                    .onDisappear { pointer.forget(id) }
+            })
+            .onChange(of: pointer.over == id) { was, now in if was && !now { onLeave() } }
     }
 }
 
@@ -2690,7 +2713,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)   // just above the menu bar, the usual level for a notch app
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.hidesOnDeactivate = false
-        panel.contentView = FirstClickHost(rootView: RootView(model: model, app: self))
+        panel.contentView = FirstClickHost(rootView: RootView(model: model, app: self).environmentObject(PointerTracker.panel))
         // codehatch is never the app in front (it has no Dock icon), so macOS treats it as a background app and puts it
         // to sleep between events ("App Nap"): its timers and pointer events are held back and batched, which shows as
         // a hover highlight or menu that lags or waits for a nudge of the mouse. It is something you point at directly,
@@ -2725,12 +2748,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self else { return }
             if !self.sawPointer { self.sawPointer = true; dbg("pointer: movements are arriving") }
             self.trackMouse()
+            self.followPointer()
         }
         NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged], handler: moved)
         NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { e in moved(e); return e }
         panel.acceptsMouseMovedEvents = true
     }
     var sawPointer = false
+    /// Tell each window's pointer tracker where the pointer is now, in that window's own coordinates.
+    func followPointer() {
+        let m = NSEvent.mouseLocation
+        func inside(_ w: NSWindow?) -> CGPoint? {
+            guard let w, w.isVisible, let v = w.contentView, w.frame.contains(m) else { return nil }
+            return v.convert(w.convertPoint(fromScreen: m), from: nil)
+        }
+        PointerTracker.panel.pointer(at: model.open ? inside(panel) : nil)
+        PointerTracker.window.pointer(at: inside(widget))
+    }
     var hoverTimer: Timer?
     /// True while the pointer is pushed into the notch (or the top centre of a screen without one).
     func pointerInNotch() -> Bool {
@@ -3074,7 +3108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Its last size and place are restored before anything is drawn in it, so it is laid out once, at its real size,
         // instead of being drawn small and then stretched (which reflowed every row and card as it opened).
         w.setFrameAutosaveName("codehatchWidget")
-        let host = FirstClickHost(rootView: RootView(model: model, app: self, detached: true))
+        let host = FirstClickHost(rootView: AnyView(RootView(model: model, app: self, detached: true).environmentObject(PointerTracker.window)))
         // Otherwise SwiftUI replaces the window's minimum size with the content's own, which is far too small.
         host.sizingOptions = []
         host.frame = NSRect(origin: .zero, size: w.contentLayoutRect.size)
