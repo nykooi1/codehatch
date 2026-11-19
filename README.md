@@ -57,12 +57,13 @@ resume it in a new terminal in the right folder.
 
 ## Where it works
 
-| | Cursor and VS Code | Terminal and iTerm2 |
-| --- | --- | --- |
-| See every session: state, branch, last message | ✓ | ✓ |
-| Go to a session | Lands on its exact terminal tab | Lands on its exact tab |
-| Highlight the session you are in | ✓ | ✓ |
-| Resume a closed session | In a new terminal tab, in the right project | In a new tab or window, in the right folder |
+| | Cursor and VS Code | Terminal and iTerm2 | Any other editor or terminal |
+| --- | --- | --- | --- |
+| See every session: state, branch, last message | ✓ | ✓ | ✓ |
+| Go to a session | Lands on its exact terminal tab | Lands on its exact tab | Brings the app to the front |
+| Highlight the session you are in | ✓ | ✓ | – |
+| Resume a closed session | In a new terminal tab, in the right project | In a new tab or window, in the right folder | In Cursor, VS Code, Terminal or iTerm2, whichever you choose |
+| Close a session from the list | ✓ | ✓ | ✓ |
 
 Other editors built on VS Code, such as Windsurf, use the same helper, but are not tested yet.
 
