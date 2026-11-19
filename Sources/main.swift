@@ -696,9 +696,24 @@ enum Terminals {
         return t.isEmpty || t.hasPrefix("?") ? nil : "/dev/" + t
     }
     @discardableResult static func script(_ source: String) -> String {
-        let out = Codex.shell("/usr/bin/osascript", ["-e", source]).trimmingCharacters(in: .whitespacesAndNewlines)
-        dbg("terminal script -> \(out.isEmpty ? "(nothing)" : out)")
-        return out
+        let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript"); p.arguments = ["-e", source]
+        let out = Pipe(), err = Pipe(); p.standardOutput = out; p.standardError = err
+        guard (try? p.run()) != nil else { return "" }
+        let said = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        let problem = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        p.waitUntilExit()
+        dbg("terminal script -> \(said.isEmpty ? "(nothing)" : said)\(problem.isEmpty ? "" : " | " + problem.prefix(160))")
+        if isDenial(problem) {
+            let app = source.contains("com.googlecode.iterm2") ? "iTerm2" : "Terminal"
+            DispatchQueue.main.async { AppDelegate.shared?.automationDenied(app) }
+            return "denied"
+        }
+        return said
+    }
+    /// True when macOS refused to let codehatch control the app, because the person said no when asked (or later turned
+    /// it off). macOS asks only once per app; after a no it never asks again, so codehatch has to say so itself.
+    static func isDenial(_ error: String) -> Bool {
+        error.contains("-1743") || error.localizedCaseInsensitiveContains("not authorized to send apple events") || error.localizedCaseInsensitiveContains("not allowed to send apple events")
     }
     /// Bring the tab showing this device to the front. True if it was found.
     static func focus(_ kind: String, tty: String) -> Bool {
@@ -2587,6 +2602,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let kind = Terminals.kind(app), let tty = Terminals.tty(of: pid) else { print("not-a-terminal app=\(app)"); exit(1) }
             print(Terminals.focus(kind, tty: tty) ? "ok \(kind) \(tty)" : "not-found \(kind) \(tty)"); exit(0)
         }
+        // --check-denial <text>: say whether this AppleScript error means macOS refused permission. For the tests.
+        if let i = CommandLine.arguments.firstIndex(of: "--check-denial"), i + 1 < CommandLine.arguments.count {
+            print(Terminals.isDenial(CommandLine.arguments[i + 1]) ? "denied" : "other"); exit(0)
+        }
         // --front-tab <kind>: print the terminal device of the tab in front, which is how the session you are in is
         // found in Terminal and iTerm2. For the tests.
         if let i = CommandLine.arguments.firstIndex(of: "--front-tab"), i + 1 < CommandLine.arguments.count {
@@ -2796,6 +2815,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return main
     }
     @objc func openSettingsFromMenu() { showSettings() }
+
+    /// macOS would not let codehatch control Terminal or iTerm2. Say so once per app per launch, with the way to fix it.
+    var toldDenied = Set<String>()
+    func automationDenied(_ app: String) {
+        guard !toldDenied.contains(app), CommandLine.arguments.firstIndex(of: "--focus-terminal") == nil else { return }
+        toldDenied.insert(app)
+        close()
+        let alert = NSAlert()
+        alert.messageText = "codehatch isn't allowed to control \(app)"
+        alert.informativeText = "To bring the right \(app) tab to the front, codehatch needs your permission. Turn on \(app) under codehatch in System Settings › Privacy & Security › Automation. Your sessions still show in the list without it."
+        alert.addButton(withTitle: "Open System Settings"); alert.addButton(withTitle: "Not now")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn, let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
+            NSWorkspace.shared.open(url)
+        }
+    }
 
     /// The codehatch mark in the menu bar, the usual home for a utility like this: click it for the panel and the
     /// window, settings, and quitting. It can be hidden in settings.

@@ -212,4 +212,87 @@ def test_app_vscode(sb):
             open(NOTE, "w").write(saved)   # put back the note about your own front terminal
 
 
-TESTS = [test_app_terminal, test_app_iterm, test_app_vscode]
+TABS = {
+    # Two more tabs in the window just opened, each running the given command; returns their devices.
+    "terminal": 'on run argv\n tell application "Terminal"\n activate\n tell application "System Events" to keystroke "t" using command down\n delay 0.8\n do script (item 1 of argv) in selected tab of front window\n delay 0.6\n return tty of selected tab of front window\n end tell\nend run',
+    "iterm": 'on run argv\n tell application id "com.googlecode.iterm2"\n tell current window to set t to (create tab with default profile)\n tell current session of t to write text (item 1 of argv)\n delay 0.8\n return tty of current session of t\n end tell\nend run',
+}
+
+
+def test_app_iterm_tabs(sb):
+    """iTerm2, several tabs in one window: going to a session selects its tab, not just its window."""
+    if not os.path.isdir("/Applications/iTerm.app"):
+        raise AssertionError("iTerm2 is not installed")
+    sc = SCRIPTS["iterm"]
+    repo = sb.repo("codehatch-test-tabs")
+    before = set(osa(IDS["iterm"]).split())
+    ttys = []
+    try:
+        first = osa(sc["open"], "cd '%s' && sleep 921" % repo); ttys.append(first)
+        second = osa(TABS["iterm"], "cd '%s' && sleep 922" % repo); ttys.append(second)
+        third = osa(TABS["iterm"], "cd '%s' && sleep 923" % repo); ttys.append(third)
+        eq(osa(sc["front"]), third, "the last tab opened is the one in front")
+        pid = wait("the first tab's process", lambda: (on_tty(first, "sleep") or [None])[0])
+        out = subprocess.run([APP, "--focus-terminal", str(pid)], capture_output=True, text=True, timeout=60).stdout.strip()
+        eq(out, "ok iterm " + first, "what the app reported")
+        eq(osa(sc["front"]), first, "the first tab, in the same window, is now the one in front")
+        mid = wait("the second tab's process", lambda: (on_tty(second, "sleep") or [None])[0])
+        subprocess.run([APP, "--focus-terminal", str(mid)], capture_output=True, text=True, timeout=60)
+        eq(osa(sc["front"]), second, "and then the middle tab")
+    finally:
+        for tty in ttys:
+            for p in on_tty(tty):
+                try:
+                    os.kill(p, 9)
+                except OSError:
+                    pass
+        time.sleep(0.5)
+        for wid in set(osa(IDS["iterm"]).split()) - before:
+            try:
+                osa(CLOSE_ID["iterm"], wid)
+            except AssertionError:
+                pass
+
+
+def test_app_terminal_real_claude(sb):
+    """Terminal with a real Claude Code session: codehatch lists it, and going to it lands on its window."""
+    import shutil, json as _json
+    if not shutil.which("claude"):
+        raise AssertionError("claude is not installed")
+    sc = SCRIPTS["terminal"]
+    repo = sb.repo("codehatch-test-real-claude")
+    before = set(osa(IDS["terminal"]).split())
+    ttys = []
+    try:
+        # Started with the env markers of any surrounding Claude session removed, as a person would start it.
+        tty = osa(sc["open"], "cd '%s' && env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_SSE_PORT claude" % repo); ttys.append(tty)
+        time.sleep(6)
+        # A folder Claude Code has not seen asks whether to trust it; choose "Yes" (down, then return).
+        osa('on run argv\n tell application "Terminal"\n repeat with w in windows\n try\n if (tty of selected tab of w) is (item 1 of argv) then do script (ASCII character 27) & "[B" in selected tab of w\n end try\n end repeat\n end tell\nend run', tty)
+        def listed():
+            for s in run.dump(sb, real_home=True)["sessions"]:
+                if s["tool"] == "claude" and os.path.realpath(s["cwd"]) == os.path.realpath(repo):
+                    return s
+        import run
+        s = wait("the real session to be listed", listed, timeout=45)
+        other = osa(sc["open"], "cd '%s' && sleep 931" % repo); ttys.append(other)
+        eq(osa(sc["front"]), other, "another window is in front")
+        out = subprocess.run([APP, "--focus-terminal", str(s["pid"])], capture_output=True, text=True, timeout=60).stdout.strip()
+        eq(out, "ok terminal " + tty, "what the app reported")
+        eq(osa(sc["front"]), tty, "the real session's window is now in front")
+    finally:
+        for t in ttys:
+            for p in on_tty(t):
+                try:
+                    os.kill(p, 9)
+                except OSError:
+                    pass
+        time.sleep(0.6)
+        for wid in set(osa(IDS["terminal"]).split()) - before:
+            try:
+                osa(CLOSE_ID["terminal"], wid)
+            except AssertionError:
+                pass
+
+
+TESTS = [test_app_terminal, test_app_iterm, test_app_iterm_tabs, test_app_terminal_real_claude, test_app_vscode]

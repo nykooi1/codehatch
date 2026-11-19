@@ -638,6 +638,14 @@ def test_drawing_leaves_settings_alone(sb):
     eq(read(), before, "the saved sample-sessions setting, before and after drawing")
 
 
+def test_automation_denial_is_recognised(sb):
+    """When macOS refuses to let codehatch control Terminal or iTerm2, the app recognises it (and tells the person how to fix it)."""
+    check = lambda text: subprocess.run([APP, "--check-denial", text], capture_output=True, text=True, timeout=30).stdout.strip()
+    eq(check("execution error: Not authorized to send Apple events to Terminal. (-1743)"), "denied", "the refusal")
+    eq(check("execution error: Can't get window 1 of application \"Terminal\". (-1728)"), "other", "an ordinary error")
+    eq(check(""), "other", "no error at all")
+
+
 def test_setup_installs_both(sb):
     """The welcome window's button: hooks go into Claude Code's and Codex's settings, and the helper into the editor, here all inside the sandbox."""
     home = sb.path("setup-home")
@@ -706,7 +714,7 @@ FAST = [test_claude_states, test_claude_just_finished, test_claude_details, test
         test_order_recent_and_by_repo, test_hidden_repos_and_labels, test_recently_closed, test_hooks_claude, test_codex_states,
         test_codex_new_style, test_hooks_codex, test_mixed_tools_summary, test_hook_script, test_hook_never_waits, test_hooks_install_and_remove, test_editor_helper, test_close_session,
         test_dashboard_groups, test_dashboard_recently_closed, test_beside_the_notch, test_beside_the_notch_quiet, test_defaults_and_menu,
-        test_everything_draws, test_drawing_leaves_settings_alone, test_setup_installs_both]
+        test_everything_draws, test_drawing_leaves_settings_alone, test_automation_denial_is_recognised, test_setup_installs_both]
 
 
 def main():
